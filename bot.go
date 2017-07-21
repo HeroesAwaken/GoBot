@@ -117,6 +117,7 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 		log.Notef("[%s.%s]: %s > %s", g.Name, c.Name, m.Author.Username, m.Content)
 
 		if c.Name != "bot-spam" && c.Name != "awoken-leads" && c.Name != "mutedisland" {
+			// Only respond it specific channels
 			return
 		}
 
@@ -136,6 +137,9 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 		}
 
 		err = s.MessageReactionAdd(m.ChannelID, m.ID, "✔")
+		if err != nil {
+			log.Errorln("Error seting Reaction:", err.Error())
+		}
 
 		switch command {
 		case "help":
@@ -150,11 +154,6 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 			s.ChannelMessageSendEmbed(m.ChannelID, embed)
 
 		case "refresh":
-
-			if err != nil {
-				log.Errorln("Error seting Reaction:", err.Error())
-			}
-
 			err = bot.DB.Ping()
 			if err != nil {
 				log.Errorln("Error with database: ", err.Error())
