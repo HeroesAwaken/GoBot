@@ -163,7 +163,7 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 			rows, err := bot.GetUserRolesByDiscordID.Query(m.Author.ID)
 			defer rows.Close()
 			if err != nil {
-				s.ChannelMessageSend(m.ChannelID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile#links-panel to link your Account! :)")
+				s.ChannelMessageSend(m.ChannelID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
 			}
 
 			count := 0
@@ -185,7 +185,7 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 			}
 
 			if count == 0 {
-				s.ChannelMessageSend(m.ChannelID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile#links-panel to link your Account! :)")
+				s.ChannelMessageSend(m.ChannelID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
 				return
 			}
 
