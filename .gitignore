@@ -1,0 +1,8 @@
+*.exe
+GoBot*
+test*
+.vscode*
+debug*
+*.zip
+*.pem
+config.yml
