@@ -144,6 +144,8 @@ func (bot *AwakenBot) ready(s *discordgo.Session, event *discordgo.Ready) {
 // the "guild_member_add" event from Discord letting us know a new user joined.
 func (bot *AwakenBot) memberAdd(s *discordgo.Session, event *discordgo.GuildMemberAdd) {
 
+	log.Noteln("User", event.User.Username, "joined.")
+
 	c, err := s.State.Channel(event.GuildID)
 	if err != nil {
 		// Could not find channel.
