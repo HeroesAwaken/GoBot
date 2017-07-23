@@ -99,9 +99,9 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB) *Aw
 }
 
 func (bot *AwakenBot) refresh(w http.ResponseWriter, r *http.Request) {
-	log.Debugln("HTTP request refreshAll")
-
 	vars := mux.Vars(r)
+	log.Debugln("HTTP request refresh", vars["id"])
+
 	if vars["id"] == "all" {
 		bot.jobsChan <- botJob{
 			jobType: "refreshAll",
