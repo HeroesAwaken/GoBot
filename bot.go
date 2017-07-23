@@ -136,9 +136,28 @@ func (bot *AwakenBot) CollectGlobalMetrics() {
 // This function will be called (due to AddHandler above) when the bot receives
 // the "ready" event from Discord.
 func (bot *AwakenBot) ready(s *discordgo.Session, event *discordgo.Ready) {
-
 	// Set the playing status.
 	s.UpdateStatus(0, prefix+" help")
+}
+
+// This function will be called (due to AddHandler above) when the bot receives
+// the "guild_member_add" event from Discord letting us know a new user joined.
+func (bot *AwakenBot) memberAdd(s *discordgo.Session, event *discordgo.GuildMemberAdd) {
+
+	c, err := s.State.Channel(event.GuildID)
+	if err != nil {
+		// Could not find channel.
+		return
+	}
+
+	// Find the guild for that channel.
+	g, err := s.State.Guild(event.GuildID)
+	if err != nil {
+		// Could not find guild.
+		return
+	}
+
+	bot.refreshUser(event.User.ID, c, g, s)
 }
 
 func (bot *AwakenBot) processJobs(s *discordgo.Session, m *discordgo.MessageCreate) {

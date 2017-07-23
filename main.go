@@ -88,6 +88,8 @@ func main() {
 	// Register guildCreate as a callback for the guildCreate events.
 	bot.DG.AddHandler(bot.guildCreate)
 
+	bot.DG.AddHandler(bot.memberAdd)
+
 	// Open the websocket and begin listening.
 	err = bot.DG.Open()
 	if err != nil {
