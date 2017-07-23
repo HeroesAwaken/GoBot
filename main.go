@@ -49,7 +49,7 @@ func main() {
 	}
 
 	metricConnection := new(core.InfluxDB)
-	err = metricConnection.New(MyConfig.InfluxDBHost, MyConfig.InfluxDBDatabase, MyConfig.InfluxDBUser, MyConfig.InfluxDBPassword)
+	err = metricConnection.New(MyConfig.InfluxDBHost, MyConfig.InfluxDBDatabase, MyConfig.InfluxDBUser, MyConfig.InfluxDBPassword, AppName, Version)
 	if err != nil {
 		log.Fatalln("Error connecting to MetricsDB:", err)
 	}

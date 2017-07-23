@@ -2,39 +2,69 @@ package main
 
 import (
 	"database/sql"
+	"net/http"
 	"runtime"
 	"strings"
 	"time"
+
+	"strconv"
 
 	log "github.com/HeroesAwaken/GoAwaken/Log"
 	"github.com/HeroesAwaken/GoAwaken/core"
 	"github.com/bwmarrin/discordgo"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/gorilla/mux"
 )
 
 type AwakenBot struct {
 	DB                      *sql.DB
 	DG                      *discordgo.Session
 	GetUserRolesByDiscordID *sql.Stmt
+	GetAllLinkedUsers       *sql.Stmt
 	iDB                     *core.InfluxDB
 	batchTicker             *time.Ticker
 	rolesToIDMap            map[string]map[string]string
+	jobsChan                chan botJob
+}
+
+type botJob struct {
+	jobType string
+	data    interface{}
 }
 
 // NewAwakenBot creates a new AwakenBot that collects metrics
 func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB) *AwakenBot {
+	var err error
+
 	bot := new(AwakenBot)
 	bot.iDB = metrics
 	bot.DB = db
 	bot.DG = dg
 
-	bot.GetUserRolesByDiscordID, _ = bot.DB.Prepare("SELECT roles.slug" +
+	// store max of 1000 jobs
+	bot.jobsChan = make(chan botJob, 1000)
+
+	bot.GetUserRolesByDiscordID, err = bot.DB.Prepare("SELECT roles.slug" +
 		"	FROM user_discords" +
 		"	LEFT JOIN role_user" +
 		"		ON role_user.user_id = user_discords.user_id" +
 		"	LEFT JOIN roles" +
 		"		ON roles.id = role_user.role_id" +
 		"	WHERE discord_id = ?")
+	if err != nil {
+		log.Fatalln("Could not prepare statement GetUserRolesByDiscordID.", err.Error())
+	}
+
+	bot.GetAllLinkedUsers, err = bot.DB.Prepare("SELECT user_discords.discord_id, GROUP_CONCAT(roles.slug) as slugs" +
+		"	FROM user_discords" +
+		"	LEFT JOIN role_user" +
+		"		ON role_user.user_id = user_discords.user_id" +
+		"	LEFT JOIN roles" +
+		"		ON roles.id = role_user.role_id" +
+		"	GROUP BY user_discords.id")
+	if err != nil {
+		log.Fatalln("Could not prepare statement GetAllLinkedUsers.", err.Error())
+	}
 
 	bot.CollectGlobalMetrics()
 	bot.batchTicker = time.NewTicker(time.Second * 10)
@@ -55,17 +85,41 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB) *Aw
 	bot.rolesToIDMap["329078443687936001"] = make(map[string]string)
 	bot.rolesToIDMap["329078443687936001"]["awokenlead"] = "329287964544860160"
 	bot.rolesToIDMap["329078443687936001"]["awokendev"] = "330164644281057282"
-	bot.rolesToIDMap["329078443687936001"]["normalUser"] = "329292742058311681"
+	bot.rolesToIDMap["329078443687936001"]["normalUser"] = "338780084133691392"
 	bot.rolesToIDMap["329078443687936001"]["staff"] = "329287195502313475"
 
+	r := mux.NewRouter()
+	r.HandleFunc("/api/refresh/{id}", bot.refresh)
+
+	go func() {
+		log.Noteln(http.ListenAndServe("0.0.0.0:4000", r))
+	}()
+
 	return bot
+}
+
+func (bot *AwakenBot) refresh(w http.ResponseWriter, r *http.Request) {
+	log.Debugln("HTTP request refreshAll")
+
+	vars := mux.Vars(r)
+	if vars["id"] == "all" {
+		bot.jobsChan <- botJob{
+			jobType: "refreshAll",
+		}
+		return
+	}
+
+	bot.jobsChan <- botJob{
+		jobType: "refresh",
+		data:    vars["id"],
+	}
 }
 
 // CollectGlobalMetrics collects global metrics about the bot and environment
 // And sends them to influxdb
 func (bot *AwakenBot) CollectGlobalMetrics() {
 	runtime.ReadMemStats(&mem)
-	tags := map[string]string{"metric": "server_metrics", "app": AppName, "server": "global", "version": Version}
+	tags := map[string]string{"metric": "server_metrics", "server": "global"}
 	fields := map[string]interface{}{
 		"memAlloc":      int(mem.Alloc),
 		"memTotalAlloc": int(mem.TotalAlloc),
@@ -87,9 +141,75 @@ func (bot *AwakenBot) ready(s *discordgo.Session, event *discordgo.Ready) {
 	s.UpdateStatus(0, prefix+" help")
 }
 
+func (bot *AwakenBot) processJobs(s *discordgo.Session, m *discordgo.MessageCreate) {
+
+	// Find the channel that the message came from.
+	c, err := s.State.Channel(m.ChannelID)
+	if err != nil {
+		// Could not find channel.
+		return
+	}
+
+	// Find the guild for that channel.
+	g, err := s.State.Guild(c.GuildID)
+	if err != nil {
+		// Could not find guild.
+		return
+	}
+
+	stop := false
+	for !stop {
+		select {
+		case job := <-bot.jobsChan:
+			switch job.jobType {
+			case "refresh":
+				if discordID, ok := job.data.(string); ok {
+					bot.refreshUser(discordID, c, g, s)
+				}
+			case "refreshAll":
+
+				rows, err := bot.GetAllLinkedUsers.Query()
+				defer rows.Close()
+				if err != nil {
+					log.Errorln("Error getting all users.")
+				}
+
+				count := 0
+				for rows.Next() {
+					var discordID, slugs string
+
+					err := rows.Scan(&discordID, &slugs)
+					if err != nil {
+						log.Errorln("Issue with database:", err.Error())
+					}
+
+					slugsSlice := strings.Split(slugs, ",")
+
+					for _, slug := range slugsSlice {
+						// Check if we have a matching discord role for the slug
+						if roleID, ok := bot.rolesToIDMap[g.ID][slug]; ok {
+							log.Debugln("Assigning Role:", g.ID, discordID, roleID)
+							s.GuildMemberRoleAdd(g.ID, discordID, roleID)
+						}
+					}
+
+					count++
+				}
+
+				log.Noteln("Updated " + strconv.Itoa(count) + " users.")
+			}
+		default:
+			stop = true
+		}
+	}
+}
+
 // This function will be called (due to AddHandler above) every time a new
 // message is created on any channel that the autenticated bot has access to.
 func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
+
+	// Start processing jobs
+	go bot.processJobs(s, m)
 
 	// Ignore all messages created by the bot itself
 	// This isn't required in this specific example but it's a good practice.
@@ -160,38 +280,52 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 				return
 			}
 
-			rows, err := bot.GetUserRolesByDiscordID.Query(m.Author.ID)
-			defer rows.Close()
-			if err != nil {
-				s.ChannelMessageSend(m.ChannelID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
-			}
-
-			count := 0
-			for rows.Next() {
-				var slug string
-
-				err := rows.Scan(&slug)
-				if err != nil {
-					log.Errorln("Issue with database:", err.Error())
-				}
-
-				// Check if we have a matching discord role for the slug
-				if roleID, ok := bot.rolesToIDMap[c.GuildID][slug]; ok {
-					log.Debugln("Assigning Role:", g.ID, m.Author.ID, roleID)
-					s.GuildMemberRoleAdd(g.ID, m.Author.ID, roleID)
-				}
-
-				count++
-			}
-
-			if count == 0 {
-				s.ChannelMessageSend(m.ChannelID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+			if len(args) == 0 {
+				bot.refreshUser(m.Author.ID, c, g, s)
 				return
 			}
-
-			s.ChannelMessageSend(m.ChannelID, "We successfully synced your roles!")
 		}
 	}
+}
+
+func (bot *AwakenBot) refreshUser(discordID string, channel *discordgo.Channel, guild *discordgo.Guild, s *discordgo.Session) {
+	log.Debugln("Refreshing discordID", discordID)
+
+	privateChannel, err := s.UserChannelCreate(discordID)
+	if err != nil {
+		privateChannel = channel
+	}
+
+	rows, err := bot.GetUserRolesByDiscordID.Query(discordID)
+	defer rows.Close()
+	if err != nil {
+		s.ChannelMessageSend(privateChannel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+	}
+
+	count := 0
+	for rows.Next() {
+		var slug string
+
+		err := rows.Scan(&slug)
+		if err != nil {
+			log.Errorln("Issue with database:", err.Error())
+		}
+
+		// Check if we have a matching discord role for the slug
+		if roleID, ok := bot.rolesToIDMap[guild.ID][slug]; ok {
+			log.Debugln("Assigning Role:", guild.ID, discordID, roleID)
+			s.GuildMemberRoleAdd(guild.ID, discordID, roleID)
+		}
+
+		count++
+	}
+
+	if count == 0 {
+		s.ChannelMessageSend(privateChannel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+		return
+	}
+
+	s.ChannelMessageSend(privateChannel.ID, "We successfully synced your roles!")
 }
 
 // This function will be called (due to AddHandler above) every time a new
