@@ -66,14 +66,14 @@ func main() {
 
 	err = dbSQL.Ping()
 	if err != nil {
-		log.Errorln("Error with database: ", err.Error())
+		log.Errorln("Error with database:", err.Error())
 		return
 	}
 
 	// Create a new Discord session using the provided bot token.
 	dg, err := discordgo.New("Bot " + MyConfig.DiscordToken)
 	if err != nil {
-		log.Errorln("Error creating Discord session: ", err)
+		log.Errorln("Error creating Discord session:", err)
 		return
 	}
 
@@ -95,7 +95,7 @@ func main() {
 	// Open the websocket and begin listening.
 	err = bot.DG.Open()
 	if err != nil {
-		log.Errorln("Error opening Discord session: ", err)
+		log.Errorln("Error opening Discord session:", err)
 		return
 	}
 

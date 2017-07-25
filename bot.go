@@ -59,7 +59,7 @@ func (bot *AwakenBot) processJobs(s *discordgo.Session) {
 				switch job.jobType {
 				case "addMembers":
 					if members, ok := job.data.([]*discordgo.Member); ok {
-						log.Noteln("Adding " + strconv.Itoa(len(members)) + " members to roles.")
+						log.Noteln("Adding" + strconv.Itoa(len(members)) + " members to roles.")
 						for index := range members {
 							memberID := members[index].User.ID
 							bot.guildMembersMutex.Lock()
