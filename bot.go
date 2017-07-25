@@ -23,13 +23,75 @@ type AwakenBot struct {
 	GetAllLinkedUsers       *sql.Stmt
 	iDB                     *core.InfluxDB
 	batchTicker             *time.Ticker
+	guildMetricsTickers     map[string]*time.Ticker
 	rolesToIDMap            map[string]map[string]string
 	jobsChan                chan botJob
+	guildMembers            map[string]map[string]*discordgo.Member
 }
 
 type botJob struct {
-	jobType string
-	data    interface{}
+	jobType      string
+	data         interface{}
+	discordGuild string
+}
+
+func (bot *AwakenBot) processJobs(s *discordgo.Session) {
+	go func() {
+		for {
+			select {
+			case job := <-bot.jobsChan:
+				guild, _ := s.State.Guild(job.discordGuild)
+
+				switch job.jobType {
+				case "addMembers":
+					if members, ok := job.data.([]*discordgo.Member); ok {
+						log.Noteln("Adding " + strconv.Itoa(len(members)) + " members to roles.")
+						for index := range members {
+							memberID := members[index].User.ID
+							bot.guildMembers[guild.ID][memberID] = members[index]
+						}
+					}
+					log.Noteln("Total Members:", len(bot.guildMembers[guild.ID]))
+
+				case "refresh":
+					if discordID, ok := job.data.(string); ok {
+						bot.refreshUser(discordID, guild, s)
+					}
+				case "refreshAll":
+
+					rows, err := bot.GetAllLinkedUsers.Query()
+					defer rows.Close()
+					if err != nil {
+						log.Errorln("Error getting all users.")
+					}
+
+					count := 0
+					for rows.Next() {
+						var discordID, slugs string
+
+						err := rows.Scan(&discordID, &slugs)
+						if err != nil {
+							log.Errorln("Issue with database:", err.Error())
+						}
+
+						slugsSlice := strings.Split(slugs, ",")
+
+						for _, slug := range slugsSlice {
+							// Check if we have a matching discord role for the slug
+							if roleID, ok := bot.rolesToIDMap[guild.ID][slug]; ok {
+								log.Debugln("Assigning Role:", guild.ID, discordID, roleID)
+								s.GuildMemberRoleAdd(guild.ID, discordID, roleID)
+							}
+						}
+
+						count++
+					}
+
+					log.Noteln("Updated " + strconv.Itoa(count) + " users.")
+				}
+			}
+		}
+	}()
 }
 
 // NewAwakenBot creates a new AwakenBot that collects metrics
@@ -76,6 +138,8 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB) *Aw
 
 	//Populate rolesToIdMap
 	bot.rolesToIDMap = make(map[string]map[string]string)
+	bot.guildMembers = make(map[string]map[string]*discordgo.Member)
+	bot.guildMetricsTickers = make(map[string]*time.Ticker)
 
 	// MakaTesting
 	bot.rolesToIDMap["320696414483120129"] = make(map[string]string)
@@ -89,7 +153,7 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB) *Aw
 	bot.rolesToIDMap["329078443687936001"]["staff"] = "329287195502313475"
 
 	r := mux.NewRouter()
-	r.HandleFunc("/api/refresh/{id}", bot.refresh)
+	r.HandleFunc("/api/refresh/{guild}/{id}", bot.refresh)
 
 	go func() {
 		log.Noteln(http.ListenAndServe("0.0.0.0:4000", r))
@@ -101,17 +165,20 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB) *Aw
 func (bot *AwakenBot) refresh(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	log.Debugln("HTTP request refresh", vars["id"])
+	log.Debugln("HTTP request refresh", vars["guild"])
 
 	if vars["id"] == "all" {
 		bot.jobsChan <- botJob{
-			jobType: "refreshAll",
+			jobType:      "refreshAll",
+			discordGuild: vars["guild"],
 		}
 		return
 	}
 
 	bot.jobsChan <- botJob{
-		jobType: "refresh",
-		data:    vars["id"],
+		jobType:      "refresh",
+		data:         vars["id"],
+		discordGuild: vars["guild"],
 	}
 }
 
@@ -138,6 +205,8 @@ func (bot *AwakenBot) CollectGlobalMetrics() {
 func (bot *AwakenBot) ready(s *discordgo.Session, event *discordgo.Ready) {
 	// Set the playing status.
 	s.UpdateStatus(0, prefix+" help")
+
+	bot.processJobs(s)
 }
 
 // This function will be called (due to AddHandler above) when the bot receives
@@ -146,11 +215,25 @@ func (bot *AwakenBot) memberAdd(s *discordgo.Session, event *discordgo.GuildMemb
 
 	log.Noteln("User", event.User.Username, "joined.")
 
-	c, err := s.State.Channel(event.GuildID)
+	// Find the guild for that channel.
+	g, err := s.State.Guild(event.GuildID)
 	if err != nil {
-		// Could not find channel.
+		// Could not find guild.
 		return
 	}
+
+	member, err := s.State.Member(g.ID, event.User.ID)
+	if err != nil {
+		log.Errorln("Could not turn joining user to member")
+	}
+
+	bot.guildMembers[g.ID][event.User.ID] = member
+	bot.refreshUser(event.User.ID, g, s)
+}
+
+func (bot *AwakenBot) memberRemove(s *discordgo.Session, event *discordgo.GuildMemberRemove) {
+
+	log.Noteln("User", event.User.Username, "left.")
 
 	// Find the guild for that channel.
 	g, err := s.State.Guild(event.GuildID)
@@ -159,78 +242,12 @@ func (bot *AwakenBot) memberAdd(s *discordgo.Session, event *discordgo.GuildMemb
 		return
 	}
 
-	bot.refreshUser(event.User.ID, c, g, s)
-}
-
-func (bot *AwakenBot) processJobs(s *discordgo.Session, m *discordgo.MessageCreate) {
-
-	// Find the channel that the message came from.
-	c, err := s.State.Channel(m.ChannelID)
-	if err != nil {
-		// Could not find channel.
-		return
-	}
-
-	// Find the guild for that channel.
-	g, err := s.State.Guild(c.GuildID)
-	if err != nil {
-		// Could not find guild.
-		return
-	}
-
-	stop := false
-	for !stop {
-		select {
-		case job := <-bot.jobsChan:
-			switch job.jobType {
-			case "refresh":
-				if discordID, ok := job.data.(string); ok {
-					bot.refreshUser(discordID, c, g, s)
-				}
-			case "refreshAll":
-
-				rows, err := bot.GetAllLinkedUsers.Query()
-				defer rows.Close()
-				if err != nil {
-					log.Errorln("Error getting all users.")
-				}
-
-				count := 0
-				for rows.Next() {
-					var discordID, slugs string
-
-					err := rows.Scan(&discordID, &slugs)
-					if err != nil {
-						log.Errorln("Issue with database:", err.Error())
-					}
-
-					slugsSlice := strings.Split(slugs, ",")
-
-					for _, slug := range slugsSlice {
-						// Check if we have a matching discord role for the slug
-						if roleID, ok := bot.rolesToIDMap[g.ID][slug]; ok {
-							log.Debugln("Assigning Role:", g.ID, discordID, roleID)
-							s.GuildMemberRoleAdd(g.ID, discordID, roleID)
-						}
-					}
-
-					count++
-				}
-
-				log.Noteln("Updated " + strconv.Itoa(count) + " users.")
-			}
-		default:
-			stop = true
-		}
-	}
+	delete(bot.guildMembers[g.ID], event.User.ID)
 }
 
 // This function will be called (due to AddHandler above) every time a new
 // message is created on any channel that the autenticated bot has access to.
 func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-
-	// Start processing jobs
-	go bot.processJobs(s, m)
 
 	// Ignore all messages created by the bot itself
 	// This isn't required in this specific example but it's a good practice.
@@ -302,19 +319,28 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 			}
 
 			if len(args) == 0 {
-				bot.refreshUser(m.Author.ID, c, g, s)
+				bot.refreshUserChannel(m.Author.ID, c, g, s)
 				return
 			}
 		}
 	}
 }
 
-func (bot *AwakenBot) refreshUser(discordID string, channel *discordgo.Channel, guild *discordgo.Guild, s *discordgo.Session) {
+func (bot *AwakenBot) refreshUser(discordID string, guild *discordgo.Guild, s *discordgo.Session) {
+	bot.refreshUserChannel(discordID, nil, guild, s)
+}
+
+func (bot *AwakenBot) refreshUserChannel(discordID string, channel *discordgo.Channel, guild *discordgo.Guild, s *discordgo.Session) {
 	log.Debugln("Refreshing discordID", discordID)
 
 	privateChannel, err := s.UserChannelCreate(discordID)
 	if err != nil {
-		privateChannel = channel
+		if channel != nil {
+			privateChannel = channel
+		} else {
+			// can't create private channel and no channel given
+			return
+		}
 	}
 
 	rows, err := bot.GetUserRolesByDiscordID.Query(discordID)
@@ -354,5 +380,101 @@ func (bot *AwakenBot) refreshUser(discordID string, channel *discordgo.Channel, 
 func (bot *AwakenBot) guildCreate(s *discordgo.Session, event *discordgo.GuildCreate) {
 	if event.Guild.Unavailable {
 		return
+	}
+
+	log.Noteln("guild created ", event.Name)
+
+	// Find the guild for that channel.
+	g, err := s.State.Guild(event.ID)
+	if err != nil {
+		// Could not find guild.
+		return
+	}
+
+	bot.guildMembers[g.ID] = make(map[string]*discordgo.Member)
+
+	bot.getAllMembers(s, g)
+
+	// Collect metrics every 10 seconds
+	bot.guildMetricsTickers[g.ID] = time.NewTicker(time.Second * 10)
+	go func() {
+		for range bot.guildMetricsTickers[g.ID].C {
+			bot.metricGuild(s, g)
+		}
+	}()
+
+	// Refresh all members every 5 minutes
+	bot.guildMetricsTickers["refresh:"+g.ID] = time.NewTicker(time.Second * 300)
+	go func() {
+		for range bot.guildMetricsTickers["refresh:"+g.ID].C {
+			bot.getAllMembers(s, g)
+		}
+	}()
+
+}
+
+// Create metrics about a guild
+func (bot *AwakenBot) metricGuild(s *discordgo.Session, g *discordgo.Guild) {
+
+	roles := make(map[string]int)
+	rolesStruct := make(map[string]*discordgo.Role)
+
+	for index := range bot.guildMembers[g.ID] {
+		for _, role := range bot.guildMembers[g.ID][index].Roles {
+			_, ok := rolesStruct[role]
+
+			if !ok {
+				dRole, err := s.State.Role(g.ID, role)
+				if err != nil {
+					log.Errorln("Could not get discord role")
+					return
+				}
+
+				rolesStruct[role] = dRole
+			}
+
+			roles[rolesStruct[role].Name]++
+		}
+	}
+
+	tags := map[string]string{"metric": "discord_metrics", "server": g.Name, "total": "true"}
+	fields := map[string]interface{}{
+		"totalMembers": len(bot.guildMembers[g.ID]),
+	}
+
+	err := bot.iDB.AddMetric("discord_metrics", tags, fields)
+	if err != nil {
+		log.Errorln("Error adding Metric:", err)
+	}
+
+	for roleName := range roles {
+		tags := map[string]string{"metric": "discord_metrics", "server": g.Name, "roleName": roleName}
+		fields := map[string]interface{}{
+			"totalMembers": roles[roleName],
+		}
+
+		err := bot.iDB.AddMetric("discord_metrics", tags, fields)
+		if err != nil {
+			log.Errorln("Error adding Metric:", err)
+		}
+		fields["totalMembers.role_"+roleName] = roles[roleName]
+	}
+}
+
+func (bot *AwakenBot) getAllMembers(s *discordgo.Session, g *discordgo.Guild) {
+	err := s.RequestGuildMembers(g.ID, "", 0)
+	if err != nil {
+		log.Errorln(err)
+	}
+}
+
+// Create metrics about a guild
+func (bot *AwakenBot) guildMembersChunk(s *discordgo.Session, c *discordgo.GuildMembersChunk) {
+	log.Noteln(len(c.Members))
+
+	bot.jobsChan <- botJob{
+		jobType:      "addMembers",
+		data:         c.Members,
+		discordGuild: c.GuildID,
 	}
 }

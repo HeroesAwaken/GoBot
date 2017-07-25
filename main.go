@@ -89,6 +89,8 @@ func main() {
 	bot.DG.AddHandler(bot.guildCreate)
 
 	bot.DG.AddHandler(bot.memberAdd)
+	bot.DG.AddHandler(bot.guildMembersChunk)
+	bot.DG.AddHandler(bot.memberRemove)
 
 	// Open the websocket and begin listening.
 	err = bot.DG.Open()
