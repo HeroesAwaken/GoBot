@@ -334,6 +334,7 @@ func (bot *AwakenBot) refreshUserChannel(discordID string, channel *discordgo.Ch
 	log.Debugln("Refreshing discordID", discordID)
 
 	privateChannel, err := s.UserChannelCreate(discordID)
+
 	if err != nil {
 		if channel != nil {
 			privateChannel = channel
@@ -346,7 +347,10 @@ func (bot *AwakenBot) refreshUserChannel(discordID string, channel *discordgo.Ch
 	rows, err := bot.GetUserRolesByDiscordID.Query(discordID)
 	defer rows.Close()
 	if err != nil {
-		s.ChannelMessageSend(privateChannel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+		_, err := s.ChannelMessageSend(privateChannel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+		if err != nil && channel != nil {
+			s.ChannelMessageSend(channel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+		}
 	}
 
 	count := 0
@@ -368,11 +372,17 @@ func (bot *AwakenBot) refreshUserChannel(discordID string, channel *discordgo.Ch
 	}
 
 	if count == 0 {
-		s.ChannelMessageSend(privateChannel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+		_, err := s.ChannelMessageSend(privateChannel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+		if err != nil && channel != nil {
+			s.ChannelMessageSend(channel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+		}
 		return
 	}
 
-	s.ChannelMessageSend(privateChannel.ID, "We successfully synced your roles!")
+	_, err = s.ChannelMessageSend(privateChannel.ID, "We successfully synced your roles!")
+	if err != nil && channel != nil {
+		s.ChannelMessageSend(channel.ID, "We successfully synced your roles!")
+	}
 }
 
 // This function will be called (due to AddHandler above) every time a new
