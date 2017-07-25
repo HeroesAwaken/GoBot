@@ -9,6 +9,8 @@ import (
 
 	"strconv"
 
+	"sync"
+
 	log "github.com/HeroesAwaken/GoAwaken/Log"
 	"github.com/HeroesAwaken/GoAwaken/core"
 	"github.com/bwmarrin/discordgo"
@@ -27,6 +29,9 @@ type AwakenBot struct {
 	rolesToIDMap            map[string]map[string]string
 	jobsChan                chan botJob
 	guildMembers            map[string]map[string]*discordgo.Member
+	guildPresences          map[string]map[string]*discordgo.Presence
+	guildMembersMutex       sync.Mutex
+	guildPresencesMutex     sync.Mutex
 }
 
 type botJob struct {
@@ -42,13 +47,24 @@ func (bot *AwakenBot) processJobs(s *discordgo.Session) {
 			case job := <-bot.jobsChan:
 				guild, _ := s.State.Guild(job.discordGuild)
 
+				// Calculate online users
+				bot.guildPresencesMutex.Lock()
+				bot.guildPresences[guild.ID] = make(map[string]*discordgo.Presence)
+				for index := range guild.Presences {
+					bot.guildPresences[guild.ID][guild.Presences[index].User.ID] = guild.Presences[index]
+				}
+				bot.guildPresencesMutex.Unlock()
+				//log.Noteln("Online Members:", len(bot.guildPresences[guild.ID]))
+
 				switch job.jobType {
 				case "addMembers":
 					if members, ok := job.data.([]*discordgo.Member); ok {
 						log.Noteln("Adding " + strconv.Itoa(len(members)) + " members to roles.")
 						for index := range members {
 							memberID := members[index].User.ID
+							bot.guildMembersMutex.Lock()
 							bot.guildMembers[guild.ID][memberID] = members[index]
+							bot.guildMembersMutex.Unlock()
 						}
 					}
 					log.Noteln("Total Members:", len(bot.guildMembers[guild.ID]))
@@ -139,6 +155,7 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB) *Aw
 	//Populate rolesToIdMap
 	bot.rolesToIDMap = make(map[string]map[string]string)
 	bot.guildMembers = make(map[string]map[string]*discordgo.Member)
+	bot.guildPresences = make(map[string]map[string]*discordgo.Presence)
 	bot.guildMetricsTickers = make(map[string]*time.Ticker)
 
 	// MakaTesting
@@ -227,7 +244,9 @@ func (bot *AwakenBot) memberAdd(s *discordgo.Session, event *discordgo.GuildMemb
 		log.Errorln("Could not turn joining user to member")
 	}
 
+	bot.guildMembersMutex.Lock()
 	bot.guildMembers[g.ID][event.User.ID] = member
+	bot.guildMembersMutex.Unlock()
 	bot.refreshUser(event.User.ID, g, s)
 }
 
@@ -242,7 +261,9 @@ func (bot *AwakenBot) memberRemove(s *discordgo.Session, event *discordgo.GuildM
 		return
 	}
 
+	bot.guildMembersMutex.Lock()
 	delete(bot.guildMembers[g.ID], event.User.ID)
+	bot.guildMembersMutex.Unlock()
 }
 
 // This function will be called (due to AddHandler above) every time a new
@@ -401,7 +422,9 @@ func (bot *AwakenBot) guildCreate(s *discordgo.Session, event *discordgo.GuildCr
 		return
 	}
 
+	bot.guildMembersMutex.Lock()
 	bot.guildMembers[g.ID] = make(map[string]*discordgo.Member)
+	bot.guildMembersMutex.Unlock()
 
 	bot.getAllMembers(s, g)
 
@@ -417,6 +440,8 @@ func (bot *AwakenBot) guildCreate(s *discordgo.Session, event *discordgo.GuildCr
 	bot.guildMetricsTickers["refresh:"+g.ID] = time.NewTicker(time.Second * 300)
 	go func() {
 		for range bot.guildMetricsTickers["refresh:"+g.ID].C {
+			// Reset member-list before requesting it all fresh
+			bot.guildMembers[g.ID] = make(map[string]*discordgo.Member)
 			bot.getAllMembers(s, g)
 		}
 	}()
@@ -429,6 +454,12 @@ func (bot *AwakenBot) metricGuild(s *discordgo.Session, g *discordgo.Guild) {
 	roles := make(map[string]int)
 	rolesStruct := make(map[string]*discordgo.Role)
 
+	online := make(map[string]map[string]int)
+	online["role"] = make(map[string]int)
+	online["status"] = make(map[string]int)
+	online["game"] = make(map[string]int)
+
+	bot.guildMembersMutex.Lock()
 	for index := range bot.guildMembers[g.ID] {
 		for _, role := range bot.guildMembers[g.ID][index].Roles {
 			_, ok := rolesStruct[role]
@@ -446,11 +477,45 @@ func (bot *AwakenBot) metricGuild(s *discordgo.Session, g *discordgo.Guild) {
 			roles[rolesStruct[role].Name]++
 		}
 	}
+	bot.guildMembersMutex.Unlock()
 
-	tags := map[string]string{"metric": "discord_metrics", "server": g.Name, "total": "true"}
-	fields := map[string]interface{}{
-		"totalMembers": len(bot.guildMembers[g.ID]),
+	bot.guildPresencesMutex.Lock()
+	for index := range bot.guildPresences[g.ID] {
+		/*
+			// Seems to be always empty right now...
+			for _, role := range bot.guildPresences[g.ID][index].Roles {
+				_, ok := rolesStruct[role]
+
+				if !ok {
+					dRole, err := s.State.Role(g.ID, role)
+					if err != nil {
+						log.Errorln("Could not get discord role")
+						return
+					}
+
+					rolesStruct[role] = dRole
+				}
+				log.Noteln(rolesStruct[role].Name)
+				online["role"][rolesStruct[role].Name]++
+			}
+		*/
+
+		online["status"][string(bot.guildPresences[g.ID][index].Status)]++
+		if bot.guildPresences[g.ID][index].Game != nil {
+			online["game"][bot.guildPresences[g.ID][index].Game.Name]++
+		}
 	}
+	bot.guildPresencesMutex.Unlock()
+
+	tags := map[string]string{"metric": "total_members", "server": g.Name}
+	bot.guildMembersMutex.Lock()
+	bot.guildPresencesMutex.Lock()
+	fields := map[string]interface{}{
+		"totalMembers":  len(bot.guildMembers[g.ID]),
+		"onlineMembers": len(bot.guildPresences[g.ID]),
+	}
+	bot.guildPresencesMutex.Unlock()
+	bot.guildMembersMutex.Unlock()
 
 	err := bot.iDB.AddMetric("discord_metrics", tags, fields)
 	if err != nil {
@@ -458,16 +523,40 @@ func (bot *AwakenBot) metricGuild(s *discordgo.Session, g *discordgo.Guild) {
 	}
 
 	for roleName := range roles {
-		tags := map[string]string{"metric": "discord_metrics", "server": g.Name, "roleName": roleName}
+		tags := map[string]string{"metric": "role_members", "server": g.Name, "roleName": roleName}
 		fields := map[string]interface{}{
 			"totalMembers": roles[roleName],
+			//"onlineMembers": online["roles"][roleName],
 		}
 
 		err := bot.iDB.AddMetric("discord_metrics", tags, fields)
 		if err != nil {
 			log.Errorln("Error adding Metric:", err)
 		}
-		fields["totalMembers.role_"+roleName] = roles[roleName]
+	}
+
+	for status := range online["status"] {
+		tags := map[string]string{"metric": "status_members", "server": g.Name, "status": status}
+		fields := map[string]interface{}{
+			"onlineMembers": online["status"][status],
+		}
+
+		err := bot.iDB.AddMetric("discord_metrics", tags, fields)
+		if err != nil {
+			log.Errorln("Error adding Metric:", err)
+		}
+	}
+
+	for game := range online["game"] {
+		tags := map[string]string{"metric": "game_members", "server": g.Name, "game": game}
+		fields := map[string]interface{}{
+			"onlineMembers": online["game"][game],
+		}
+
+		err := bot.iDB.AddMetric("discord_metrics", tags, fields)
+		if err != nil {
+			log.Errorln("Error adding Metric:", err)
+		}
 	}
 }
 
@@ -481,7 +570,6 @@ func (bot *AwakenBot) getAllMembers(s *discordgo.Session, g *discordgo.Guild) {
 // Create metrics about a guild
 func (bot *AwakenBot) guildMembersChunk(s *discordgo.Session, c *discordgo.GuildMembersChunk) {
 	log.Noteln(len(c.Members))
-
 	bot.jobsChan <- botJob{
 		jobType:      "addMembers",
 		data:         c.Members,
