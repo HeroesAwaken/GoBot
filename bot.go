@@ -232,7 +232,7 @@ func (bot *AwakenBot) ready(s *discordgo.Session, event *discordgo.Ready) {
 // the "guild_member_add" event from Discord letting us know a new user joined.
 func (bot *AwakenBot) memberAdd(s *discordgo.Session, event *discordgo.GuildMemberAdd) {
 
-	log.Noteln("User", event.User.Username, "joined.")
+	log.Noteln("User ", event.User.Username, " joined.")
 
 	// Find the guild for that channel.
 	g, err := s.State.Guild(event.GuildID)
@@ -254,7 +254,7 @@ func (bot *AwakenBot) memberAdd(s *discordgo.Session, event *discordgo.GuildMemb
 
 func (bot *AwakenBot) memberRemove(s *discordgo.Session, event *discordgo.GuildMemberRemove) {
 
-	log.Noteln("User", event.User.Username, "left.")
+	log.Noteln("User ", event.User.Username, " left.")
 
 	// Find the guild for that channel.
 	g, err := s.State.Guild(event.GuildID)
