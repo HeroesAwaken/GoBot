@@ -6,7 +6,7 @@ import (
 	"net"
 	"os"
 
-	log "github.com/HeroesAwaken/GoAwaken/Log"
+	"github.com/HeroesAwaken/GoAwaken/Log"
 	"golang.org/x/crypto/ssh"
 )
 

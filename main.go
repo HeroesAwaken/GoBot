@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"syscall"
 
-	log "github.com/HeroesAwaken/GoAwaken/Log"
+	"github.com/HeroesAwaken/GoAwaken/Log"
 	"github.com/HeroesAwaken/GoAwaken/core"
 	"github.com/bwmarrin/discordgo"
 	_ "github.com/go-sql-driver/mysql"
