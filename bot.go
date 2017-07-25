@@ -11,7 +11,7 @@ import (
 
 	"sync"
 
-	log "github.com/HeroesAwaken/GoAwaken/Log"
+	"github.com/HeroesAwaken/GoAwaken/Log"
 	"github.com/HeroesAwaken/GoAwaken/core"
 	"github.com/bwmarrin/discordgo"
 	_ "github.com/go-sql-driver/mysql"
@@ -59,7 +59,7 @@ func (bot *AwakenBot) processJobs(s *discordgo.Session) {
 				switch job.jobType {
 				case "addMembers":
 					if members, ok := job.data.([]*discordgo.Member); ok {
-						log.Noteln("Adding " + strconv.Itoa(len(members)) + " members to roles.")
+						log.Noteln("Adding" + strconv.Itoa(len(members)) + " members to roles.")
 						for index := range members {
 							memberID := members[index].User.ID
 							bot.guildMembersMutex.Lock()
