@@ -67,7 +67,9 @@ func (bot *AwakenBot) processJobs(s *discordgo.Session) {
 							bot.guildMembersMutex.Unlock()
 						}
 					}
+					bot.guildMembersMutex.Lock()
 					log.Noteln("Total Members:", len(bot.guildMembers[guild.ID]))
+					bot.guildMembersMutex.Unlock()
 
 				case "refresh":
 					if discordID, ok := job.data.(string); ok {
@@ -441,7 +443,9 @@ func (bot *AwakenBot) guildCreate(s *discordgo.Session, event *discordgo.GuildCr
 	go func() {
 		for range bot.guildMetricsTickers["refresh:"+g.ID].C {
 			// Reset member-list before requesting it all fresh
+			bot.guildMembersMutex.Lock()
 			bot.guildMembers[g.ID] = make(map[string]*discordgo.Member)
+			bot.guildMembersMutex.Unlock()
 			bot.getAllMembers(s, g)
 		}
 	}()
