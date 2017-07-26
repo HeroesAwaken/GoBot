@@ -442,6 +442,9 @@ func (bot *AwakenBot) guildCreate(s *discordgo.Session, event *discordgo.GuildCr
 	bot.guildMetricsTickers["refresh:"+g.ID] = time.NewTicker(time.Second * 300)
 	go func() {
 		for range bot.guildMetricsTickers["refresh:"+g.ID].C {
+			// Wait 3 seconds to not clear the members map
+			// while creating a metric, should probably be done in a proper way
+			time.Sleep(time.Second * 3)
 			// Reset member-list before requesting it all fresh
 			bot.guildMembersMutex.Lock()
 			bot.guildMembers[g.ID] = make(map[string]*discordgo.Member)
