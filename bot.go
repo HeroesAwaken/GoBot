@@ -19,19 +19,21 @@ import (
 )
 
 type AwakenBot struct {
-	DB                      *sql.DB
-	DG                      *discordgo.Session
-	GetUserRolesByDiscordID *sql.Stmt
-	GetAllLinkedUsers       *sql.Stmt
-	iDB                     *core.InfluxDB
-	batchTicker             *time.Ticker
-	guildMetricsTickers     map[string]*time.Ticker
-	rolesToIDMap            map[string]map[string]string
-	jobsChan                chan botJob
-	guildMembers            map[string]map[string]*discordgo.Member
-	guildPresences          map[string]map[string]*discordgo.Presence
-	guildMembersMutex       sync.Mutex
-	guildPresencesMutex     sync.Mutex
+	DB                           *sql.DB
+	DG                           *discordgo.Session
+	GetUserRolesByDiscordID      *sql.Stmt
+	GetAllLinkedUsers            *sql.Stmt
+	GetRoleBySlug                *sql.Stmt
+	iDB                          *core.InfluxDB
+	batchTicker                  *time.Ticker
+	guildMetricsTickers          map[string]*time.Ticker
+	rolesToIDMap                 map[string]map[string]string
+	jobsChan                     chan botJob
+	guildMembers                 map[string]map[string]*discordgo.Member
+	guildPresences               map[string]map[string]*discordgo.Presence
+	guildMembersMutex            sync.Mutex
+	guildPresencesMutex          sync.Mutex
+	mapUpdateUsersVariableAmount map[int]*sql.Stmt
 }
 
 type botJob struct {
@@ -123,6 +125,7 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB) *Aw
 
 	// store max of 1000 jobs
 	bot.jobsChan = make(chan botJob, 1000)
+	bot.mapUpdateUsersVariableAmount = make(map[int]*sql.Stmt)
 
 	bot.GetUserRolesByDiscordID, err = bot.DB.Prepare("SELECT roles.slug" +
 		"	FROM user_discords" +
@@ -146,6 +149,13 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB) *Aw
 		log.Fatalln("Could not prepare statement GetAllLinkedUsers.", err.Error())
 	}
 
+	bot.GetRoleBySlug, err = bot.DB.Prepare("SELECT id, title, slug" +
+		"	FROM roles" +
+		"	WHERE slug = ?")
+	if err != nil {
+		log.Fatalln("Could not prepare statement GetAllLinkedUsers.", err.Error())
+	}
+
 	bot.CollectGlobalMetrics()
 	bot.batchTicker = time.NewTicker(time.Second * 10)
 	go func() {
@@ -162,14 +172,18 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB) *Aw
 
 	// MakaTesting
 	bot.rolesToIDMap["320696414483120129"] = make(map[string]string)
-	bot.rolesToIDMap["320696414483120129"]["normalUser"] = "337934780463185931"
+	bot.rolesToIDMap["320696414483120129"]["normaluser"] = "337934780463185931"
+	bot.rolesToIDMap["320696414483120129"]["awokenlead"] = "337934780463185931"
 
 	// HeroesAwaken
 	bot.rolesToIDMap["329078443687936001"] = make(map[string]string)
 	bot.rolesToIDMap["329078443687936001"]["awokenlead"] = "329287964544860160"
 	bot.rolesToIDMap["329078443687936001"]["awokendev"] = "330164644281057282"
-	bot.rolesToIDMap["329078443687936001"]["normalUser"] = "338780084133691392"
+	bot.rolesToIDMap["329078443687936001"]["normaluser"] = "338780084133691392"
 	bot.rolesToIDMap["329078443687936001"]["staff"] = "329287195502313475"
+	bot.rolesToIDMap["329078443687936001"]["advancedmember"] = "330080920424022017"
+	bot.rolesToIDMap["329078443687936001"]["communitymanager"] = "330085415182663682"
+	bot.rolesToIDMap["329078443687936001"]["tester"] = "340576558249148430"
 
 	r := mux.NewRouter()
 	r.HandleFunc("/api/refresh/{guild}/{id}", bot.refresh)
@@ -199,6 +213,37 @@ func (bot *AwakenBot) refresh(w http.ResponseWriter, r *http.Request) {
 		data:         vars["id"],
 		discordGuild: vars["guild"],
 	}
+}
+
+func (bot *AwakenBot) updateUsersByDiscordId(usersAmount int) *sql.Stmt {
+	var err error
+
+	// Check if we already have a statement prepared for that amount of stats
+	if statement, ok := bot.mapUpdateUsersVariableAmount[usersAmount]; ok {
+		return statement
+	}
+
+	var query string
+	for i := 1; i < usersAmount; i++ {
+		query += "?, "
+	}
+
+	sql := "INSERT INTO role_user" +
+		"	(user_id, role_id)" +
+		"	(" +
+		"		SELECT user_id, ?" +
+		"		FROM user_discords" +
+		"		WHERE discord_id IN (" + query + "?)" +
+		"	)" +
+		"	ON DUPLICATE KEY UPDATE role_id=role_id"
+
+	bot.mapUpdateUsersVariableAmount[usersAmount], err = bot.DB.Prepare(sql)
+	if err != nil {
+		log.Fatalln("Error preparing stmtGetStatsVariableAmount with "+sql+" query.", err.Error())
+	}
+
+	return bot.mapUpdateUsersVariableAmount[usersAmount]
+
 }
 
 // CollectGlobalMetrics collects global metrics about the bot and environment
@@ -250,6 +295,57 @@ func (bot *AwakenBot) memberAdd(s *discordgo.Session, event *discordgo.GuildMemb
 	bot.guildMembers[g.ID][event.User.ID] = member
 	bot.guildMembersMutex.Unlock()
 	bot.refreshUser(event.User.ID, g, s)
+}
+
+func (bot *AwakenBot) memberUpdate(s *discordgo.Session, event *discordgo.GuildMemberUpdate) {
+	log.Noteln("User", event.User.Username, "updated.")
+	isNewTester := false
+	newRoles := event.Roles
+	roleExisted := make(map[string]bool)
+
+	bot.guildMembersMutex.Lock()
+	oldroles := bot.guildMembers[event.GuildID][event.User.ID].Roles
+	bot.guildMembers[event.GuildID][event.User.ID] = event.Member
+	bot.guildMembersMutex.Unlock()
+
+	for _, oldRole := range oldroles {
+		roleExisted[oldRole] = true
+	}
+
+	for _, newRole := range newRoles {
+		if !roleExisted[newRole] && newRole == bot.rolesToIDMap[event.GuildID]["tester"] {
+			isNewTester = true
+			break
+		}
+	}
+
+	if isNewTester {
+		var id, title, slug string
+		err := bot.GetRoleBySlug.QueryRow("tester").Scan(&id, &title, &slug)
+		if err != nil {
+			log.Noteln("Could not get role!", err)
+			return
+		}
+
+		var queryArgs []interface{}
+		queryArgs = append(queryArgs, id)
+		queryArgs = append(queryArgs, event.User.ID)
+
+		_, err = bot.updateUsersByDiscordId(1).Exec(queryArgs...)
+		if err != nil {
+			log.Errorln("Failed setting tester role to member ", err.Error())
+			return
+		}
+
+		// Find the guild for that channel.
+		g, err := s.State.Guild(event.GuildID)
+		if err != nil {
+			// Could not find guild.
+			return
+		}
+
+		bot.send(event.User.ID, "Gratulations! You are now a Tester!\nPlease head over to the #tester channel and read the pins to get started", nil, g, s)
+	}
 }
 
 func (bot *AwakenBot) memberRemove(s *discordgo.Session, event *discordgo.GuildMemberRemove) {
@@ -345,6 +441,100 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 				bot.refreshUserChannel(m.Author.ID, c, g, s)
 				return
 			}
+
+		case "syncRole":
+			// Find the member from the message
+			member, err := s.State.Member(g.ID, m.Author.ID)
+			if err != nil {
+				// Could not find member.
+				log.Errorln("Could not find member", err)
+				return
+			}
+
+			allowed := false
+			for _, value := range member.Roles {
+				if bot.rolesToIDMap[g.ID]["awokenlead"] == value {
+					allowed = true
+					break
+				}
+			}
+
+			if !allowed {
+				bot.send(member.User.ID, "You are not allowed to run this function", c, g, s)
+				return
+			}
+
+			if len(args) != 1 {
+				bot.send(member.User.ID, "Please use "+prefix+" syncRole ROLENAME", c, g, s)
+				return
+			}
+
+			if _, ok := bot.rolesToIDMap[g.ID][args[0]]; !ok {
+				bot.send(member.User.ID, "Unknown role", c, g, s)
+				return
+			}
+
+			var id, title, slug string
+			err = bot.GetRoleBySlug.QueryRow(args[0]).Scan(&id, &title, &slug)
+			if err != nil {
+				log.Noteln("Could not get role!", err)
+				return
+			}
+
+			members := bot.getMembersByRole(bot.rolesToIDMap[g.ID][args[0]], g)
+			var queryArgs []interface{}
+			queryArgs = append(queryArgs, id)
+			for _, member := range members {
+				queryArgs = append(queryArgs, member.User.ID)
+			}
+
+			_, err = bot.updateUsersByDiscordId(len(members)).Exec(queryArgs...)
+			if err != nil {
+				log.Errorln("Failed setting all roles for members ", err.Error())
+			}
+
+			bot.send(member.User.ID, "Assigned "+args[0]+" to "+strconv.Itoa(len(members))+" members", c, g, s)
+		default:
+			bot.send(m.Author.ID, "Unknown function :shrug:", c, g, s)
+		}
+	}
+}
+
+func (bot *AwakenBot) getMembersByRole(roleID string, g *discordgo.Guild) []*discordgo.Member {
+	var members []*discordgo.Member
+
+	bot.guildMembersMutex.Lock()
+	for index := range bot.guildMembers[g.ID] {
+		for _, role := range bot.guildMembers[g.ID][index].Roles {
+			if role == roleID {
+				members = append(members, bot.guildMembers[g.ID][index])
+				break
+			}
+		}
+	}
+	bot.guildMembersMutex.Unlock()
+
+	return members
+}
+
+func (bot *AwakenBot) send(discordID string, message string, channel *discordgo.Channel, guild *discordgo.Guild, s *discordgo.Session) {
+	log.Noteln("Sending '" + message + "' to '" + discordID + "'")
+	privateChannel, err := s.UserChannelCreate(discordID)
+
+	if err != nil {
+		if channel != nil {
+			privateChannel = channel
+		} else {
+			// can't create private channel and no channel given
+			return
+		}
+	}
+
+	_, err = s.ChannelMessageSend(privateChannel.ID, message)
+	if err != nil && channel != nil {
+		_, err = s.ChannelMessageSend(channel.ID, message)
+		if err != nil {
+			log.Errorln(err)
 		}
 	}
 }
@@ -362,6 +552,7 @@ func (bot *AwakenBot) refreshUserChannel(discordID string, channel *discordgo.Ch
 		if channel != nil {
 			privateChannel = channel
 		} else {
+			log.Error("Can't create private channel and no channel given")
 			// can't create private channel and no channel given
 			return
 		}
@@ -372,7 +563,10 @@ func (bot *AwakenBot) refreshUserChannel(discordID string, channel *discordgo.Ch
 	if err != nil {
 		_, err := s.ChannelMessageSend(privateChannel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
 		if err != nil && channel != nil {
-			s.ChannelMessageSend(channel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+			_, err = s.ChannelMessageSend(channel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+			if err != nil {
+				log.Errorln(err)
+			}
 		}
 	}
 
@@ -388,7 +582,10 @@ func (bot *AwakenBot) refreshUserChannel(discordID string, channel *discordgo.Ch
 		// Check if we have a matching discord role for the slug
 		if roleID, ok := bot.rolesToIDMap[guild.ID][slug]; ok {
 			log.Debugln("Assigning Role:", guild.ID, discordID, roleID)
-			s.GuildMemberRoleAdd(guild.ID, discordID, roleID)
+			err = s.GuildMemberRoleAdd(guild.ID, discordID, roleID)
+			if err != nil {
+				log.Errorln(err)
+			}
 		}
 
 		count++
@@ -397,14 +594,20 @@ func (bot *AwakenBot) refreshUserChannel(discordID string, channel *discordgo.Ch
 	if count == 0 {
 		_, err := s.ChannelMessageSend(privateChannel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
 		if err != nil && channel != nil {
-			s.ChannelMessageSend(channel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+			_, err = s.ChannelMessageSend(channel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+			if err != nil {
+				log.Errorln(err)
+			}
 		}
 		return
 	}
 
 	_, err = s.ChannelMessageSend(privateChannel.ID, "We successfully synced your roles!")
 	if err != nil && channel != nil {
-		s.ChannelMessageSend(channel.ID, "We successfully synced your roles!")
+		_, err = s.ChannelMessageSend(channel.ID, "We successfully synced your roles!")
+		if err != nil {
+			log.Errorln(err)
+		}
 	}
 }
 
