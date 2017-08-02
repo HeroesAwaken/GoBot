@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"net/http"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -24,8 +25,11 @@ type AwakenBot struct {
 	GetUserRolesByDiscordID      *sql.Stmt
 	GetAllLinkedUsers            *sql.Stmt
 	GetRoleBySlug                *sql.Stmt
+	GetStatsByDiscordID          *sql.Stmt
 	iDB                          *core.InfluxDB
 	batchTicker                  *time.Ticker
+	prefix                       string
+	regexUserID                  *regexp.Regexp
 	guildMetricsTickers          map[string]*time.Ticker
 	rolesToIDMap                 map[string]map[string]string
 	jobsChan                     chan botJob
@@ -115,13 +119,16 @@ func (bot *AwakenBot) processJobs(s *discordgo.Session) {
 }
 
 // NewAwakenBot creates a new AwakenBot that collects metrics
-func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB) *AwakenBot {
+func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB, prefix string) *AwakenBot {
 	var err error
 
 	bot := new(AwakenBot)
 	bot.iDB = metrics
 	bot.DB = db
 	bot.DG = dg
+	bot.prefix = prefix
+
+	bot.regexUserID, _ = regexp.Compile("<@([0-9]+)>")
 
 	// store max of 1000 jobs
 	bot.jobsChan = make(chan botJob, 1000)
@@ -147,6 +154,18 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB) *Aw
 		"	GROUP BY user_discords.id")
 	if err != nil {
 		log.Fatalln("Could not prepare statement GetAllLinkedUsers.", err.Error())
+	}
+
+	bot.GetStatsByDiscordID, err = bot.DB.Prepare(
+		"SELECT game_heroes.id, game_heroes.heroName, game_stats.statsKey, game_stats.statsValue" +
+			"	FROM user_discords" +
+			"	LEFT JOIN game_heroes" +
+			"		ON game_heroes.user_id = user_discords.user_id" +
+			"	LEFT JOIN game_stats" +
+			"		ON game_stats.heroID = game_heroes.id" +
+			"	WHERE discord_id = ?")
+	if err != nil {
+		log.Fatalln("Could not prepare statement GetStatsByDiscordID.", err.Error())
 	}
 
 	bot.GetRoleBySlug, err = bot.DB.Prepare("SELECT id, title, slug" +
@@ -191,6 +210,20 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB) *Aw
 	go func() {
 		log.Noteln(http.ListenAndServe("0.0.0.0:4000", r))
 	}()
+
+	// Register ready as a callback for the ready events.
+	bot.DG.AddHandler(bot.ready)
+
+	// Register messageCreate as a callback for the messageCreate events.
+	bot.DG.AddHandler(bot.messageCreate)
+
+	// Register guildCreate as a callback for the guildCreate events.
+	bot.DG.AddHandler(bot.guildCreate)
+
+	bot.DG.AddHandler(bot.memberAdd)
+	bot.DG.AddHandler(bot.guildMembersChunk)
+	bot.DG.AddHandler(bot.memberRemove)
+	bot.DG.AddHandler(bot.memberUpdate)
 
 	return bot
 }
@@ -268,7 +301,7 @@ func (bot *AwakenBot) CollectGlobalMetrics() {
 // the "ready" event from Discord.
 func (bot *AwakenBot) ready(s *discordgo.Session, event *discordgo.Ready) {
 	// Set the playing status.
-	s.UpdateStatus(0, prefix+" help")
+	s.UpdateStatus(0, bot.prefix+" help")
 
 	bot.processJobs(s)
 }
@@ -302,9 +335,12 @@ func (bot *AwakenBot) memberUpdate(s *discordgo.Session, event *discordgo.GuildM
 	isNewTester := false
 	newRoles := event.Roles
 	roleExisted := make(map[string]bool)
+	oldroles := []string{}
 
 	bot.guildMembersMutex.Lock()
-	oldroles := bot.guildMembers[event.GuildID][event.User.ID].Roles
+	if bot.guildMembers[event.GuildID][event.User.ID] != nil {
+		oldroles = bot.guildMembers[event.GuildID][event.User.ID].Roles
+	}
 	bot.guildMembers[event.GuildID][event.User.ID] = event.Member
 	bot.guildMembersMutex.Unlock()
 
@@ -423,8 +459,8 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 			embed := NewEmbed().
 				SetTitle("HeroesAwaken").
 				SetDescription("Your friendly bot :)").
-				AddField(prefix+" help", "Show this lovely help").
-				AddField(prefix+" refresh", "Manually refresh your roles").
+				AddField(bot.prefix+" help", "Show this lovely help").
+				AddField(bot.prefix+" refresh", "Manually refresh your roles").
 				SetThumbnail("https://heroesawaken.com/images/logo_new_small.png").
 				//SetColor(0x00ff00).
 				MessageEmbed
@@ -443,57 +479,9 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 			}
 
 		case "syncRole":
-			// Find the member from the message
-			member, err := s.State.Member(g.ID, m.Author.ID)
-			if err != nil {
-				// Could not find member.
-				log.Errorln("Could not find member", err)
-				return
-			}
-
-			allowed := false
-			for _, value := range member.Roles {
-				if bot.rolesToIDMap[g.ID]["awokenlead"] == value {
-					allowed = true
-					break
-				}
-			}
-
-			if !allowed {
-				bot.send(member.User.ID, "You are not allowed to run this function", c, g, s)
-				return
-			}
-
-			if len(args) != 1 {
-				bot.send(member.User.ID, "Please use "+prefix+" syncRole ROLENAME", c, g, s)
-				return
-			}
-
-			if _, ok := bot.rolesToIDMap[g.ID][args[0]]; !ok {
-				bot.send(member.User.ID, "Unknown role", c, g, s)
-				return
-			}
-
-			var id, title, slug string
-			err = bot.GetRoleBySlug.QueryRow(args[0]).Scan(&id, &title, &slug)
-			if err != nil {
-				log.Noteln("Could not get role!", err)
-				return
-			}
-
-			members := bot.getMembersByRole(bot.rolesToIDMap[g.ID][args[0]], g)
-			var queryArgs []interface{}
-			queryArgs = append(queryArgs, id)
-			for _, member := range members {
-				queryArgs = append(queryArgs, member.User.ID)
-			}
-
-			_, err = bot.updateUsersByDiscordId(len(members)).Exec(queryArgs...)
-			if err != nil {
-				log.Errorln("Failed setting all roles for members ", err.Error())
-			}
-
-			bot.send(member.User.ID, "Assigned "+args[0]+" to "+strconv.Itoa(len(members))+" members", c, g, s)
+			bot.cmdSync(s, c, g, m, args)
+		case "stats":
+			bot.cmdStats(s, c, g, m, args)
 		default:
 			bot.send(m.Author.ID, "Unknown function :shrug:", c, g, s)
 		}

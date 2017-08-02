@@ -26,7 +26,6 @@ var (
 	configPath string
 	logLevel   string
 	buffer     = make([][]byte, 0)
-	prefix     = "!ha"
 
 	// MyConfig Default configuration
 	MyConfig = Config{
@@ -77,21 +76,7 @@ func main() {
 		return
 	}
 
-	bot := NewAwakenBot(dbSQL, dg, metricConnection)
-
-	// Register ready as a callback for the ready events.
-	bot.DG.AddHandler(bot.ready)
-
-	// Register messageCreate as a callback for the messageCreate events.
-	bot.DG.AddHandler(bot.messageCreate)
-
-	// Register guildCreate as a callback for the guildCreate events.
-	bot.DG.AddHandler(bot.guildCreate)
-
-	bot.DG.AddHandler(bot.memberAdd)
-	bot.DG.AddHandler(bot.guildMembersChunk)
-	bot.DG.AddHandler(bot.memberRemove)
-	bot.DG.AddHandler(bot.memberUpdate)
+	bot := NewAwakenBot(dbSQL, dg, metricConnection, "!ha")
 
 	// Open the websocket and begin listening.
 	err = bot.DG.Open()
