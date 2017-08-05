@@ -380,7 +380,7 @@ func (bot *AwakenBot) memberUpdate(s *discordgo.Session, event *discordgo.GuildM
 			return
 		}
 
-		bot.send(event.User.ID, "Gratulations! You are now a Tester!\nPlease head over to the #tester channel and read the pins to get started", nil, g, s)
+		bot.send(event.User.ID, "Gratulations! You are now a Tester!\nPlease head over to the #testing-changelog channel and read up on how to get started!\n\nSee you on the Battlefield!", nil, g, s)
 	}
 }
 
