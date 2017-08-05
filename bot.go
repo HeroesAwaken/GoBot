@@ -34,6 +34,7 @@ type AwakenBot struct {
 	rolesToIDMap                 map[string]map[string]string
 	jobsChan                     chan botJob
 	guildMembers                 map[string]map[string]*discordgo.Member
+	guildMembersTemp             map[string]map[string]*discordgo.Member
 	guildPresences               map[string]map[string]*discordgo.Presence
 	guildMembersMutex            sync.Mutex
 	guildPresencesMutex          sync.Mutex
@@ -68,14 +69,17 @@ func (bot *AwakenBot) processJobs(s *discordgo.Session) {
 						log.Noteln("Adding" + strconv.Itoa(len(members)) + " members to roles.")
 						for index := range members {
 							memberID := members[index].User.ID
-							bot.guildMembersMutex.Lock()
-							bot.guildMembers[guild.ID][memberID] = members[index]
-							bot.guildMembersMutex.Unlock()
+							bot.guildMembersTemp[guild.ID][memberID] = members[index]
+						}
+
+						// Chunk lower than 1000 means it's the end
+						if len(members) < 1000 {
+							bot.guildPresencesMutex.Lock()
+							bot.guildMembers[guild.ID] = bot.guildMembersTemp[guild.ID]
+							bot.guildPresencesMutex.Unlock()
 						}
 					}
-					bot.guildMembersMutex.Lock()
-					log.Noteln("Total Members:", len(bot.guildMembers[guild.ID]))
-					bot.guildMembersMutex.Unlock()
+					log.Noteln("Total Members:", len(bot.guildMembersTemp[guild.ID]))
 
 				case "refresh":
 					if discordID, ok := job.data.(string); ok {
@@ -186,6 +190,7 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB, pre
 	//Populate rolesToIdMap
 	bot.rolesToIDMap = make(map[string]map[string]string)
 	bot.guildMembers = make(map[string]map[string]*discordgo.Member)
+	bot.guildMembersTemp = make(map[string]map[string]*discordgo.Member)
 	bot.guildPresences = make(map[string]map[string]*discordgo.Presence)
 	bot.guildMetricsTickers = make(map[string]*time.Ticker)
 
@@ -618,6 +623,7 @@ func (bot *AwakenBot) guildCreate(s *discordgo.Session, event *discordgo.GuildCr
 	bot.guildMembersMutex.Lock()
 	bot.guildMembers[g.ID] = make(map[string]*discordgo.Member)
 	bot.guildMembersMutex.Unlock()
+	bot.guildMembersTemp[g.ID] = make(map[string]*discordgo.Member)
 
 	bot.getAllMembers(s, g)
 
@@ -633,13 +639,7 @@ func (bot *AwakenBot) guildCreate(s *discordgo.Session, event *discordgo.GuildCr
 	bot.guildMetricsTickers["refresh:"+g.ID] = time.NewTicker(time.Second * 300)
 	go func() {
 		for range bot.guildMetricsTickers["refresh:"+g.ID].C {
-			// Wait 3 seconds to not clear the members map
-			// while creating a metric, should probably be done in a proper way
-			time.Sleep(time.Second * 3)
-			// Reset member-list before requesting it all fresh
-			bot.guildMembersMutex.Lock()
-			bot.guildMembers[g.ID] = make(map[string]*discordgo.Member)
-			bot.guildMembersMutex.Unlock()
+			bot.guildMembersTemp[g.ID] = make(map[string]*discordgo.Member)
 			bot.getAllMembers(s, g)
 		}
 	}()
