@@ -52,6 +52,7 @@ func (bot *AwakenBot) processJobs(s *discordgo.Session) {
 		for {
 			select {
 			case job := <-bot.jobsChan:
+				log.Debugln(len(bot.jobsChan), "Jobs waiting to be processed")
 				guild, _ := s.State.Guild(job.discordGuild)
 
 				// Calculate online users
@@ -61,7 +62,7 @@ func (bot *AwakenBot) processJobs(s *discordgo.Session) {
 					bot.guildPresences[guild.ID][guild.Presences[index].User.ID] = guild.Presences[index]
 				}
 				bot.guildPresencesMutex.Unlock()
-				//log.Noteln("Online Members:", len(bot.guildPresences[guild.ID]))
+				//log.Debugln("Online Members:", len(bot.guildPresences[guild.ID]))
 
 				switch job.jobType {
 				case "addMembers":
@@ -75,6 +76,7 @@ func (bot *AwakenBot) processJobs(s *discordgo.Session) {
 						// Chunk lower than 1000 means it's the end
 						if len(members) < 1000 {
 							bot.guildPresencesMutex.Lock()
+							bot.guildMembers[guild.ID] = make(map[string]*discordgo.Member)
 							bot.guildMembers[guild.ID] = bot.guildMembersTemp[guild.ID]
 							bot.guildPresencesMutex.Unlock()
 						}
