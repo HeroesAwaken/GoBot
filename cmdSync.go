@@ -57,7 +57,7 @@ func (bot *AwakenBot) cmdSync(s *discordgo.Session, c *discordgo.Channel, g *dis
 
 	_, err = bot.updateUsersByDiscordId(len(members)).Exec(queryArgs...)
 	if err != nil {
-		log.Errorln("Failed setting all roles for members ", err.Error())
+		log.Errorln("Failed setting all roles for members", err.Error())
 	}
 
 	bot.send(member.User.ID, "Assigned "+args[0]+" to "+strconv.Itoa(len(members))+" members", c, g, s)
