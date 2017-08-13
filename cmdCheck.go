@@ -40,40 +40,9 @@ func (bot *AwakenBot) cmdCheck(s *discordgo.Session, c *discordgo.Channel, g *di
 		return
 	}
 
-	identifierType, identifier, err := bot.getUser(args[0], s, g)
+	discordID, err := bot.getDiscordID(args[0], s, g)
 	if err != nil {
 		bot.send(member.User.ID, "Could not detect user. Please try again. "+err.Error(), c, g, s)
-		return
-	}
-
-	switch identifierType {
-	case "discord":
-		bot.discordStats(identifier, c, s, g, m, member)
-	case "website":
-		bot.websiteStats(identifier, c, s, g, m, member)
-	case "hero":
-		bot.heroStats(identifier, c, s, g, m, member)
-	}
-}
-
-func (bot *AwakenBot) websiteStats(identifier string, c *discordgo.Channel, s *discordgo.Session, g *discordgo.Guild, m *discordgo.MessageCreate, member *discordgo.Member) {
-	var err error
-	var discordID string
-	err = bot.GetDiscordIDByUser.QueryRow(identifier).Scan(&discordID)
-	if err != nil {
-		bot.send(member.User.ID, "Could get user info. Please try again. "+err.Error(), c, g, s)
-		return
-	}
-
-	bot.discordStats(discordID, c, s, g, m, member)
-}
-
-func (bot *AwakenBot) heroStats(identifier string, c *discordgo.Channel, s *discordgo.Session, g *discordgo.Guild, m *discordgo.MessageCreate, member *discordgo.Member) {
-	var err error
-	var discordID string
-	err = bot.GetDiscordIDByHero.QueryRow(identifier).Scan(&discordID)
-	if err != nil {
-		bot.send(member.User.ID, "Could get user info. Please try again. "+err.Error(), c, g, s)
 		return
 	}
 
@@ -128,7 +97,8 @@ func (bot *AwakenBot) discordStats(identifier string, c *discordgo.Channel, s *d
 	}
 }
 
-func (bot *AwakenBot) getUser(userString string, s *discordgo.Session, g *discordgo.Guild) (string, string, error) {
+func (bot *AwakenBot) getDiscordID(userString string, s *discordgo.Session, g *discordgo.Guild) (string, error) {
+	var err error
 
 	// Check if it's a discord user mention
 	found := bot.regexUserID.FindStringSubmatch(userString)
@@ -138,17 +108,34 @@ func (bot *AwakenBot) getUser(userString string, s *discordgo.Session, g *discor
 		if err != nil {
 			// Could not find member.
 			log.Errorln("Could not find member", err)
-			return "", "", errors.New("Could not find member")
+			return "", errors.New("Could not find member")
 		}
-		return "discord", member.User.ID, nil
+		return member.User.ID, nil
 	}
 
 	args := strings.Split(userString, ":")
 	if len(args) != 2 {
-		return "", "", errors.New("Invalid format. please use TYPE:NICK. E.g. website:Makahost or hero:RoyalMaka")
+		return "", errors.New("Invalid format. please use TYPE:NICK. E.g. website:Makahost or hero:RoyalMaka")
 	}
 
-	log.Debugln(args[0], args[1])
+	switch args[0] {
+	case "disord":
+		return args[1], nil
+	case "hero":
+		var discordID string
+		err = bot.GetDiscordIDByHero.QueryRow(args[1]).Scan(&discordID)
+		if err != nil {
+			return "", errors.New("Could net get user info by hero")
+		}
+		return discordID, nil
+	case "website":
+		var discordID string
+		err = bot.GetDiscordIDByUser.QueryRow(args[1]).Scan(&discordID)
+		if err != nil {
+			return "", errors.New("Could net get user info by user")
+		}
+		return discordID, nil
+	}
 
-	return args[0], args[1], nil
+	return args[1], nil
 }
