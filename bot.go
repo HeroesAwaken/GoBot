@@ -29,6 +29,7 @@ type AwakenBot struct {
 	GetUserByDiscordID           *sql.Stmt
 	GetDiscordIDByUser           *sql.Stmt
 	GetDiscordIDByHero           *sql.Stmt
+	RemoveRoleByDiscordID        *sql.Stmt
 	iDB                          *core.InfluxDB
 	batchTicker                  *time.Ticker
 	prefix                       string
@@ -170,6 +171,16 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB, pre
 		"	WHERE username LIKE ?")
 	if err != nil {
 		log.Fatalln("Could not prepare statement GetDiscordIDByUser.", err.Error())
+	}
+
+	bot.RemoveRoleByDiscordID, err = bot.DB.Prepare("DELETE role_user" +
+		"	FROM role_user" +
+		"	LEFT JOIN user_discords" +
+		"		ON role_user.user_id = user_discords.user_id" +
+		"	WHERE role_user.role_id = ?" +
+		"		AND user_discords.discord_id = ?")
+	if err != nil {
+		log.Fatalln("Could not prepare statement RemoveRoleByDiscordID.", err.Error())
 	}
 
 	bot.GetDiscordIDByHero, err = bot.DB.Prepare("SELECT user_discords.discord_id" +
@@ -521,6 +532,8 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 			bot.cmdStats(s, c, g, m, args)
 		case "check":
 			bot.cmdCheck(s, c, g, m, args)
+		case "removePlayer":
+			bot.cmdRemovePlayer(s, c, g, m, args)
 		default:
 			bot.send(m.Author.ID, "Unknown function :shrug:", c, g, s)
 		}
