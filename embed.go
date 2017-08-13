@@ -50,6 +50,10 @@ func (e *Embed) AddField(name, value string) *Embed {
 		name = name[:1024]
 	}
 
+	if value == "" {
+		value = "-"
+	}
+
 	e.Fields = append(e.Fields, &discordgo.MessageEmbedField{
 		Name:  name,
 		Value: value,
