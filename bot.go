@@ -26,6 +26,9 @@ type AwakenBot struct {
 	GetAllLinkedUsers            *sql.Stmt
 	GetRoleBySlug                *sql.Stmt
 	GetStatsByDiscordID          *sql.Stmt
+	GetUserByDiscordID           *sql.Stmt
+	GetDiscordIDByUser           *sql.Stmt
+	GetDiscordIDByHero           *sql.Stmt
 	iDB                          *core.InfluxDB
 	batchTicker                  *time.Ticker
 	prefix                       string
@@ -149,6 +152,33 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB, pre
 		"	WHERE discord_id = ?")
 	if err != nil {
 		log.Fatalln("Could not prepare statement GetUserRolesByDiscordID.", err.Error())
+	}
+
+	bot.GetUserByDiscordID, err = bot.DB.Prepare("SELECT users.id, users.username, users.email, users.birthday, users.ip_address, user_discords.discord_name, user_discords.discord_email, user_discords.discord_discriminator" +
+		"	FROM user_discords" +
+		"	LEFT JOIN users" +
+		"		ON users.id = user_discords.user_id" +
+		"	WHERE discord_id = ?")
+	if err != nil {
+		log.Fatalln("Could not prepare statement GetUserByDiscordID.", err.Error())
+	}
+
+	bot.GetDiscordIDByUser, err = bot.DB.Prepare("SELECT user_discords.discord_id" +
+		"	FROM users" +
+		"	LEFT JOIN user_discords" +
+		"		ON users.id = user_discords.user_id" +
+		"	WHERE username LIKE ?")
+	if err != nil {
+		log.Fatalln("Could not prepare statement GetDiscordIDByUser.", err.Error())
+	}
+
+	bot.GetDiscordIDByHero, err = bot.DB.Prepare("SELECT user_discords.discord_id" +
+		"	FROM game_heroes" +
+		"	LEFT JOIN user_discords" +
+		"		ON game_heroes.user_id = user_discords.user_id" +
+		"	WHERE heroName LIKE ?")
+	if err != nil {
+		log.Fatalln("Could not prepare statement GetDiscordIDByHero.", err.Error())
 	}
 
 	bot.GetAllLinkedUsers, err = bot.DB.Prepare("SELECT user_discords.discord_id, GROUP_CONCAT(roles.slug) as slugs" +
@@ -387,7 +417,7 @@ func (bot *AwakenBot) memberUpdate(s *discordgo.Session, event *discordgo.GuildM
 			return
 		}
 
-		bot.send(event.User.ID, "Gratulations! You are now a Tester!\nPlease head over to the #testing-changelog channel and read up on how to get started!\n\nSee you on the Battlefield!", nil, g, s)
+		bot.send(event.User.ID, "Gratulations! You are now a Player!\nPlease head over to the #player-changelog channel and read up on how to get started!\n\nSee you on the Battlefield!", nil, g, s)
 	}
 }
 
@@ -436,7 +466,7 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 
 		log.Notef("[%s.%s]: %s > %s", g.Name, c.Name, m.Author.Username, m.Content)
 
-		if c.Name != "bot-spam" && c.Name != "awoken-leads" && c.Name != "mutedisland" {
+		if c.Name != "bot-spam" && c.Name != "awoken-leads" && c.Name != "mutedisland" && c.Name != "community-manager" && c.Name != "awoken-staff" {
 			// Only respond it specific channels
 			return
 		}
@@ -489,6 +519,8 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 			bot.cmdSync(s, c, g, m, args)
 		case "stats":
 			bot.cmdStats(s, c, g, m, args)
+		case "check":
+			bot.cmdCheck(s, c, g, m, args)
 		default:
 			bot.send(m.Author.ID, "Unknown function :shrug:", c, g, s)
 		}
