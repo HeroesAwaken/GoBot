@@ -206,7 +206,7 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB, pre
 	}
 
 	bot.GetIDByDiscordID, err = bot.DB.Prepare("SELECT user_id" +
-		"	FROM user_discord" +
+		"	FROM user_discords" +
 		"	WHERE discord_id LIKE ?")
 	if err != nil {
 		log.Fatalln("Could not prepare statement GetIDByDiscordID.", err.Error())
@@ -529,6 +529,19 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 				SetDescription("Your friendly bot :)").
 				AddField(bot.prefix+" help", "Show this lovely help").
 				AddField(bot.prefix+" refresh", "Manually refresh your roles").
+				AddField(bot.prefix+" check discord:DISCORDID", "Checks a discord user by his discord ID,Available for CommunityManager+").
+				AddField(bot.prefix+" check hero:HERONAME", "Checks a hero and shows his discord ID etc,Available for CommunityManager+").
+				AddField(bot.prefix+" check website:WEBSITEUSERNAME", "Checks a user by his website Name,Available for CommunityManager+").
+				AddField(bot.prefix+" check @USER", "Checks the tagged discord user,Available for CommunityManager+").
+				AddField(bot.prefix+" removePlayer discord:DISCORDID", "Removes the Player role from the ID specified,Available for CommunityManager+").
+				AddField(bot.prefix+" removePlayer hero:HERONAME", "Removes the Player role from the Hero specified,Available for CommunityManager+").
+				AddField(bot.prefix+" removePlayer website:WEBSITEUSERNAME", "Removes the Player role from the Website username specified,Available for CommunityManager+").
+				AddField(bot.prefix+" removePlayer @USER", "Removes the Player role from the User tagged,Available for CommunityManager+").
+				AddField(bot.prefix+" stats discord:DISCORDID", "Check stats of the ID specified").
+				AddField(bot.prefix+" stats hero:HERONAME", "Check stats of the Hero specified").
+				AddField(bot.prefix+" stats website:WEBSITEUSERNAME", "Check stats of the Website username specified").
+				AddField(bot.prefix+" stats @USER", "Check stats of the User tagged").
+				AddField(bot.prefix+" stats ", "Check your stats").
 				SetThumbnail("https://heroesawaken.com/images/logo_new_small.png").
 				//SetColor(0x00ff00).
 				MessageEmbed
