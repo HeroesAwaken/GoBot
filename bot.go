@@ -23,13 +23,16 @@ type AwakenBot struct {
 	DB                           *sql.DB
 	DG                           *discordgo.Session
 	GetUserRolesByDiscordID      *sql.Stmt
+	GetUserRolesByID             *sql.Stmt
 	GetAllLinkedUsers            *sql.Stmt
 	GetRoleBySlug                *sql.Stmt
 	GetStatsByDiscordID          *sql.Stmt
-	GetUserByDiscordID           *sql.Stmt
-	GetDiscordIDByUser           *sql.Stmt
-	GetDiscordIDByHero           *sql.Stmt
-	RemoveRoleByDiscordID        *sql.Stmt
+	GetUserWithDiscord           *sql.Stmt
+	GetIDByDiscordID             *sql.Stmt
+	GetIDByUser                  *sql.Stmt
+	GetIDByHero                  *sql.Stmt
+	GetDiscordIDByID             *sql.Stmt
+	RemoveRoleByID               *sql.Stmt
 	iDB                          *core.InfluxDB
 	batchTicker                  *time.Ticker
 	prefix                       string
@@ -155,41 +158,58 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB, pre
 		log.Fatalln("Could not prepare statement GetUserRolesByDiscordID.", err.Error())
 	}
 
-	bot.GetUserByDiscordID, err = bot.DB.Prepare("SELECT users.id, users.username, users.email, users.birthday, users.ip_address, user_discords.discord_name, user_discords.discord_email, user_discords.discord_discriminator" +
-		"	FROM user_discords" +
-		"	LEFT JOIN users" +
-		"		ON users.id = user_discords.user_id" +
-		"	WHERE discord_id = ?")
+	bot.GetUserRolesByID, err = bot.DB.Prepare("SELECT roles.slug" +
+		"	FROM role_user" +
+		"	LEFT JOIN roles" +
+		"		ON roles.id = role_user.role_id" +
+		"	WHERE role_user.user_id = ?")
 	if err != nil {
-		log.Fatalln("Could not prepare statement GetUserByDiscordID.", err.Error())
+		log.Fatalln("Could not prepare statement GetUserRolesByID.", err.Error())
 	}
 
-	bot.GetDiscordIDByUser, err = bot.DB.Prepare("SELECT user_discords.discord_id" +
+	bot.GetUserWithDiscord, err = bot.DB.Prepare("SELECT users.id, users.username, users.email, users.birthday, users.ip_address, user_discords.discord_name, user_discords.discord_email, user_discords.discord_discriminator, user_discords.discord_id" +
 		"	FROM users" +
 		"	LEFT JOIN user_discords" +
 		"		ON users.id = user_discords.user_id" +
+		"	WHERE users.id = ?")
+	if err != nil {
+		log.Fatalln("Could not prepare statement GetUserWithDiscord.", err.Error())
+	}
+
+	bot.GetIDByUser, err = bot.DB.Prepare("SELECT id" +
+		"	FROM users" +
 		"	WHERE username LIKE ?")
 	if err != nil {
-		log.Fatalln("Could not prepare statement GetDiscordIDByUser.", err.Error())
+		log.Fatalln("Could not prepare statement GetIDByUser.", err.Error())
 	}
 
-	bot.RemoveRoleByDiscordID, err = bot.DB.Prepare("DELETE role_user" +
-		"	FROM role_user" +
-		"	LEFT JOIN user_discords" +
-		"		ON role_user.user_id = user_discords.user_id" +
-		"	WHERE role_user.role_id = ?" +
-		"		AND user_discords.discord_id = ?")
+	bot.GetDiscordIDByID, err = bot.DB.Prepare("SELECT discord_id" +
+		"	FROM user_discords" +
+		"	WHERE user_id LIKE ?")
 	if err != nil {
-		log.Fatalln("Could not prepare statement RemoveRoleByDiscordID.", err.Error())
+		log.Fatalln("Could not prepare statement GetDiscordIDByID.", err.Error())
 	}
 
-	bot.GetDiscordIDByHero, err = bot.DB.Prepare("SELECT user_discords.discord_id" +
+	bot.RemoveRoleByID, err = bot.DB.Prepare("DELETE role_user" +
+		"	FROM role_user" +
+		"	WHERE role_user.role_id = ?" +
+		"		AND role_user.user_id = ?")
+	if err != nil {
+		log.Fatalln("Could not prepare statement RemoveRoleByID.", err.Error())
+	}
+
+	bot.GetIDByHero, err = bot.DB.Prepare("SELECT user_id" +
 		"	FROM game_heroes" +
-		"	LEFT JOIN user_discords" +
-		"		ON game_heroes.user_id = user_discords.user_id" +
 		"	WHERE heroName LIKE ?")
 	if err != nil {
-		log.Fatalln("Could not prepare statement GetDiscordIDByHero.", err.Error())
+		log.Fatalln("Could not prepare statement GetIDByHero.", err.Error())
+	}
+
+	bot.GetIDByDiscordID, err = bot.DB.Prepare("SELECT user_id" +
+		"	FROM user_discord" +
+		"	WHERE discord_id LIKE ?")
+	if err != nil {
+		log.Fatalln("Could not prepare statement GetIDByDiscordID.", err.Error())
 	}
 
 	bot.GetAllLinkedUsers, err = bot.DB.Prepare("SELECT user_discords.discord_id, GROUP_CONCAT(roles.slug) as slugs" +

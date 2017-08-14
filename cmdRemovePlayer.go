@@ -37,7 +37,7 @@ func (bot *AwakenBot) cmdRemovePlayer(s *discordgo.Session, c *discordgo.Channel
 		return
 	}
 
-	discordID, err := bot.getDiscordID(args[0], s, g)
+	userID, err := bot.getUserID(args[0], s, g)
 	if err != nil {
 		bot.send(member.User.ID, "Could not detect user. Please try again. "+err.Error(), c, g, s)
 		return
@@ -45,9 +45,17 @@ func (bot *AwakenBot) cmdRemovePlayer(s *discordgo.Session, c *discordgo.Channel
 
 	// Remove Role from website
 	// id 9 = tester
-	_, err = bot.RemoveRoleByDiscordID.Exec("9", discordID)
+	_, err = bot.RemoveRoleByID.Exec("9", userID)
 	if err != nil {
 		log.Errorln("Failed removing role from user", err.Error())
+		bot.send(member.User.ID, "Could remove from website. "+err.Error(), c, g, s)
+	}
+
+	var discordID string
+	err = bot.GetIDByHero.QueryRow(userID).Scan(&discordID)
+	if err != nil {
+		log.Errorln("Could not find discordID")
+		bot.send(member.User.ID, "Could not find discordID. "+err.Error(), c, g, s)
 	}
 
 	// Remove discord role

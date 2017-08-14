@@ -19,14 +19,21 @@ func (bot *AwakenBot) cmdStats(s *discordgo.Session, c *discordgo.Channel, g *di
 	}
 
 	if len(args) == 1 {
-		found := bot.regexUserID.FindStringSubmatch(args[0])
-		if len(found) != 2 {
-			bot.send(member.User.ID, "Invalid user.", c, g, s)
+
+		userID, err := bot.getUserID(args[0], s, g)
+		if err != nil {
+			bot.send(member.User.ID, "Could not detect user. Please try again. "+err.Error(), c, g, s)
 			return
 		}
 
-		mentionUserID := found[1]
-		member, err = s.State.Member(g.ID, mentionUserID)
+		var discordID string
+		err = bot.GetIDByHero.QueryRow(userID).Scan(&discordID)
+		if err != nil {
+			log.Errorln("Could not find discordID")
+			bot.send(member.User.ID, "Could not find discordID. "+err.Error(), c, g, s)
+		}
+
+		member, err = s.State.Member(g.ID, discordID)
 		if err != nil {
 			// Could not find member.
 			log.Errorln("Could not find member", err)

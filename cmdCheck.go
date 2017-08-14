@@ -40,25 +40,25 @@ func (bot *AwakenBot) cmdCheck(s *discordgo.Session, c *discordgo.Channel, g *di
 		return
 	}
 
-	discordID, err := bot.getDiscordID(args[0], s, g)
+	userID, err := bot.getUserID(args[0], s, g)
 	if err != nil {
 		bot.send(member.User.ID, "Could not detect user. Please try again. "+err.Error(), c, g, s)
 		return
 	}
 
-	bot.discordStats(discordID, c, s, g, m, member)
+	bot.discordStats(userID, c, s, g, m, member)
 }
 
 func (bot *AwakenBot) discordStats(identifier string, c *discordgo.Channel, s *discordgo.Session, g *discordgo.Guild, m *discordgo.MessageCreate, member *discordgo.Member) {
 	var err error
-	var id, username, email, birthday, ipAddress, discordName, discordEmail, discordDiscriminator string
-	err = bot.GetUserByDiscordID.QueryRow(identifier).Scan(&id, &username, &email, &birthday, &ipAddress, &discordName, &discordEmail, &discordDiscriminator)
+	var id, username, email, birthday, ipAddress, discordName, discordEmail, discordDiscriminator, discordID *string
+	err = bot.GetUserWithDiscord.QueryRow(identifier).Scan(id, username, email, birthday, ipAddress, discordName, discordEmail, discordDiscriminator, discordID)
 	if err != nil {
 		bot.send(member.User.ID, "Could get user info. Please try again. "+err.Error(), c, g, s)
 		return
 	}
 
-	rows, err := bot.GetUserRolesByDiscordID.Query(identifier)
+	rows, err := bot.GetUserRolesByID.Query(identifier)
 	defer rows.Close()
 	if err != nil {
 		bot.send(member.User.ID, "Could get user roles. Please try again. "+err.Error(), c, g, s)
@@ -78,15 +78,15 @@ func (bot *AwakenBot) discordStats(identifier string, c *discordgo.Channel, s *d
 	}
 
 	embed := NewEmbed().
-		SetTitle("User info on "+username).
-		AddField("ID", id).
-		AddField("Username", username).
-		AddField("eMail", email).
-		AddField("Birthday", birthday).
-		AddField("IP-Address", ipAddress).
-		AddField("Discord", discordName+"#"+discordDiscriminator).
-		AddField("Discord-ID", identifier).
-		AddField("Discord-eMail", discordEmail).
+		SetTitle("User info on "+*username).
+		AddField("ID", *id).
+		AddField("Username", *username).
+		AddField("eMail", *email).
+		AddField("Birthday", *birthday).
+		AddField("IP-Address", *ipAddress).
+		AddField("Discord", *discordName+"#"+*discordDiscriminator).
+		AddField("Discord-ID", *discordID).
+		AddField("Discord-eMail", *discordEmail).
 		AddField("Roles", strings.Join(roles, ", ")).
 		SetColor(0x00ff00).
 		InlineAllFields().
@@ -97,7 +97,7 @@ func (bot *AwakenBot) discordStats(identifier string, c *discordgo.Channel, s *d
 	}
 }
 
-func (bot *AwakenBot) getDiscordID(userString string, s *discordgo.Session, g *discordgo.Guild) (string, error) {
+func (bot *AwakenBot) getUserID(userString string, s *discordgo.Session, g *discordgo.Guild) (string, error) {
 	var err error
 
 	// Check if it's a discord user mention
@@ -110,7 +110,12 @@ func (bot *AwakenBot) getDiscordID(userString string, s *discordgo.Session, g *d
 			log.Errorln("Could not find member", err)
 			return "", errors.New("Could not find member")
 		}
-		return member.User.ID, nil
+		var id string
+		err = bot.GetIDByDiscordID.QueryRow(member.User.ID).Scan(&id)
+		if err != nil {
+			return "", errors.New("Could net get user info by hero")
+		}
+		return id, nil
 	}
 
 	args := strings.Split(userString, ":")
@@ -122,19 +127,19 @@ func (bot *AwakenBot) getDiscordID(userString string, s *discordgo.Session, g *d
 	case "disord":
 		return args[1], nil
 	case "hero":
-		var discordID string
-		err = bot.GetDiscordIDByHero.QueryRow(args[1]).Scan(&discordID)
+		var id string
+		err = bot.GetIDByHero.QueryRow(args[1]).Scan(&id)
 		if err != nil {
 			return "", errors.New("Could net get user info by hero")
 		}
-		return discordID, nil
+		return id, nil
 	case "website":
-		var discordID string
-		err = bot.GetDiscordIDByUser.QueryRow(args[1]).Scan(&discordID)
+		var id string
+		err = bot.GetIDByUser.QueryRow(args[1]).Scan(&id)
 		if err != nil {
 			return "", errors.New("Could net get user info by user")
 		}
-		return discordID, nil
+		return id, nil
 	}
 
 	return args[1], nil
