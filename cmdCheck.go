@@ -46,13 +46,15 @@ func (bot *AwakenBot) cmdCheck(s *discordgo.Session, c *discordgo.Channel, g *di
 		return
 	}
 
+	log.Debugln(userID)
+
 	bot.discordStats(userID, c, s, g, m, member)
 }
 
 func (bot *AwakenBot) discordStats(identifier string, c *discordgo.Channel, s *discordgo.Session, g *discordgo.Guild, m *discordgo.MessageCreate, member *discordgo.Member) {
 	var err error
 	var id, username, email, birthday, ipAddress, discordName, discordEmail, discordDiscriminator, discordID *string
-	err = bot.GetUserWithDiscord.QueryRow(identifier).Scan(id, username, email, birthday, ipAddress, discordName, discordEmail, discordDiscriminator, discordID)
+	err = bot.GetUserWithDiscord.QueryRow(identifier).Scan(&id, &username, &email, &birthday, &ipAddress, &discordName, &discordEmail, &discordDiscriminator, &discordID)
 	if err != nil {
 		bot.send(member.User.ID, "Could get user info. Please try again. "+err.Error(), c, g, s)
 		return
