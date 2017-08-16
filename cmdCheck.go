@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
 	"strings"
 
@@ -53,7 +54,7 @@ func (bot *AwakenBot) cmdCheck(s *discordgo.Session, c *discordgo.Channel, g *di
 
 func (bot *AwakenBot) discordStats(identifier string, c *discordgo.Channel, s *discordgo.Session, g *discordgo.Guild, m *discordgo.MessageCreate, member *discordgo.Member) {
 	var err error
-	var id, username, email, birthday, ipAddress, discordName, discordEmail, discordDiscriminator, discordID *string
+	var id, username, email, birthday, ipAddress, discordName, discordEmail, discordDiscriminator, discordID sql.NullString
 	err = bot.GetUserWithDiscord.QueryRow(identifier).Scan(&id, &username, &email, &birthday, &ipAddress, &discordName, &discordEmail, &discordDiscriminator, &discordID)
 	if err != nil {
 		bot.send(member.User.ID, "Could get user info. Please try again. "+err.Error(), c, g, s)
@@ -80,15 +81,15 @@ func (bot *AwakenBot) discordStats(identifier string, c *discordgo.Channel, s *d
 	}
 
 	embed := NewEmbed().
-		SetTitle("User info on "+*username).
-		AddField("ID", *id).
-		AddField("Username", *username).
-		AddField("eMail", *email).
-		AddField("Birthday", *birthday).
-		AddField("IP-Address", *ipAddress).
-		AddField("Discord", *discordName+"#"+*discordDiscriminator).
-		AddField("Discord-ID", *discordID).
-		AddField("Discord-eMail", *discordEmail).
+		SetTitle("User info on "+username.String).
+		AddField("ID", id.String).
+		AddField("Username", username.String).
+		AddField("eMail", email.String).
+		AddField("Birthday", birthday.String).
+		AddField("IP-Address", ipAddress.String).
+		AddField("Discord", discordName.String+"#"+discordDiscriminator.String).
+		AddField("Discord-ID", discordID.String).
+		AddField("Discord-eMail", discordEmail.String).
 		AddField("Roles", strings.Join(roles, ", ")).
 		SetColor(0x00ff00).
 		InlineAllFields().
@@ -126,8 +127,13 @@ func (bot *AwakenBot) getUserID(userString string, s *discordgo.Session, g *disc
 	}
 
 	switch args[0] {
-	case "disord":
-		return args[1], nil
+	case "discord":
+		var id string
+		err = bot.GetIDByDiscordID.QueryRow(args[1]).Scan(&id)
+		if err != nil {
+			return "", errors.New("Could net get user info by discord")
+		}
+		return id, nil
 	case "hero":
 		var id string
 		err = bot.GetIDByHero.QueryRow(args[1]).Scan(&id)

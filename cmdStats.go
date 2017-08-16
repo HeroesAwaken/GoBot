@@ -27,10 +27,11 @@ func (bot *AwakenBot) cmdStats(s *discordgo.Session, c *discordgo.Channel, g *di
 		}
 
 		var discordID string
-		err = bot.GetIDByHero.QueryRow(userID).Scan(&discordID)
+		err = bot.GetDiscordIDByID.QueryRow(userID).Scan(&discordID)
 		if err != nil {
 			log.Errorln("Could not find discordID")
 			bot.send(member.User.ID, "Could not find discordID. "+err.Error(), c, g, s)
+			return
 		}
 
 		member, err = s.State.Member(g.ID, discordID)

@@ -529,14 +529,14 @@ func (bot *AwakenBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCr
 				SetDescription("Your friendly bot :)").
 				AddField(bot.prefix+" help", "Show this lovely help").
 				AddField(bot.prefix+" refresh", "Manually refresh your roles").
-				AddField(bot.prefix+" check discord:DISCORDID", "Checks a discord user by his discord ID,Available for CommunityManager+").
-				AddField(bot.prefix+" check hero:HERONAME", "Checks a hero and shows his discord ID etc,Available for CommunityManager+").
-				AddField(bot.prefix+" check website:WEBSITEUSERNAME", "Checks a user by his website Name,Available for CommunityManager+").
-				AddField(bot.prefix+" check @USER", "Checks the tagged discord user,Available for CommunityManager+").
-				AddField(bot.prefix+" removePlayer discord:DISCORDID", "Removes the Player role from the ID specified,Available for CommunityManager+").
-				AddField(bot.prefix+" removePlayer hero:HERONAME", "Removes the Player role from the Hero specified,Available for CommunityManager+").
-				AddField(bot.prefix+" removePlayer website:WEBSITEUSERNAME", "Removes the Player role from the Website username specified,Available for CommunityManager+").
-				AddField(bot.prefix+" removePlayer @USER", "Removes the Player role from the User tagged,Available for CommunityManager+").
+				AddField(bot.prefix+" check discord:DISCORDID", "Checks a discord user by his discord ID\n*Available for CommunityManager+*").
+				AddField(bot.prefix+" check hero:HERONAME", "Checks a hero and shows his discord ID etc\n*Available for CommunityManager+*").
+				AddField(bot.prefix+" check website:WEBSITEUSERNAME", "Checks a user by his website Name\n*Available for CommunityManager+*").
+				AddField(bot.prefix+" check @USER", "Checks the tagged discord user\n*Available for CommunityManager+*").
+				AddField(bot.prefix+" removePlayer discord:DISCORDID", "Removes the Player role from the ID specified\n*Available for CommunityManager+*").
+				AddField(bot.prefix+" removePlayer hero:HERONAME", "Removes the Player role from the Hero specified\n*Available for CommunityManager+*").
+				AddField(bot.prefix+" removePlayer website:WEBSITEUSERNAME", "Removes the Player role from the Website username specified\n*Available for CommunityManager+*").
+				AddField(bot.prefix+" removePlayer @USER", "Removes the Player role from the User tagged\n*Available for CommunityManager+*").
 				AddField(bot.prefix+" stats discord:DISCORDID", "Check stats of the ID specified").
 				AddField(bot.prefix+" stats hero:HERONAME", "Check stats of the Hero specified").
 				AddField(bot.prefix+" stats website:WEBSITEUSERNAME", "Check stats of the Website username specified").
