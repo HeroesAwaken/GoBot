@@ -32,6 +32,7 @@ type AwakenBot struct {
 	GetIDByUser                  *sql.Stmt
 	GetIDByHero                  *sql.Stmt
 	GetDiscordIDByID             *sql.Stmt
+	GetAllDiscordUsers           *sql.Stmt
 	RemoveRoleByID               *sql.Stmt
 	iDB                          *core.InfluxDB
 	batchTicker                  *time.Ticker
@@ -94,6 +95,8 @@ func (bot *AwakenBot) processJobs(s *discordgo.Session) {
 					if discordID, ok := job.data.(string); ok {
 						bot.refreshUser(discordID, guild, s)
 					}
+				case "refreshNicks":
+					bot.refeshNicks(guild, s)
 				case "refreshAll":
 
 					rows, err := bot.GetAllLinkedUsers.Query()
@@ -172,6 +175,14 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB, pre
 		"	LEFT JOIN user_discords" +
 		"		ON users.id = user_discords.user_id" +
 		"	WHERE users.id = ?")
+	if err != nil {
+		log.Fatalln("Could not prepare statement GetUserWithDiscord.", err.Error())
+	}
+
+	bot.GetAllDiscordUsers, err = bot.DB.Prepare("SELECT users.id, users.username, users.email, users.birthday, users.ip_address, user_discords.discord_name, user_discords.discord_email, user_discords.discord_discriminator, user_discords.discord_id" +
+		"	FROM user_discords" +
+		"	LEFT JOIN users" +
+		"		ON users.id = user_discords.user_id")
 	if err != nil {
 		log.Fatalln("Could not prepare statement GetUserWithDiscord.", err.Error())
 	}
@@ -274,6 +285,7 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB, pre
 
 	r := mux.NewRouter()
 	r.HandleFunc("/api/refresh/{guild}/{id}", bot.refresh)
+	r.HandleFunc("/api/refreshNicks/{guild}", bot.refreshNicks)
 
 	go func() {
 		log.Noteln(http.ListenAndServe("0.0.0.0:4000", r))
@@ -294,6 +306,16 @@ func NewAwakenBot(db *sql.DB, dg *discordgo.Session, metrics *core.InfluxDB, pre
 	bot.DG.AddHandler(bot.memberUpdate)
 
 	return bot
+}
+
+func (bot *AwakenBot) refreshNicks(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	log.Debugln("HTTP request refresh", vars["guild"])
+
+	bot.jobsChan <- botJob{
+		jobType:      "refreshNicks",
+		discordGuild: vars["guild"],
+	}
 }
 
 func (bot *AwakenBot) refresh(w http.ResponseWriter, r *http.Request) {
@@ -610,6 +632,41 @@ func (bot *AwakenBot) send(discordID string, message string, channel *discordgo.
 			log.Errorln(err)
 		}
 	}
+}
+
+func (bot *AwakenBot) refeshNicks(guild *discordgo.Guild, s *discordgo.Session) {
+	rows, err := bot.GetAllDiscordUsers.Query()
+	defer rows.Close()
+	if err != nil {
+		log.Errorln("Unable to get all Discord Users", err.Error())
+	}
+
+	users := make(map[string]string)
+
+	for rows.Next() {
+		var userID, username, email, birthday, ipAddress, discordName, discordEmail, discordDiscriminator, discordID sql.NullString
+		err := rows.Scan(&userID, &username, &email, &birthday, &ipAddress, &discordName, &discordEmail, &discordDiscriminator, &discordID)
+		if err != nil {
+			log.Errorln("Issue with database:", err.Error())
+		}
+
+		users[discordID.String] = username.String
+	}
+
+	i := 0
+	for discordID, user := range users {
+		err = s.GuildMemberNickname(guild.ID, discordID, user)
+		if err != nil {
+			log.Errorln("Unable to set member nickname to "+user, err.Error())
+		}
+		i++
+
+		if i%10 == 0 {
+			log.Debugln("Updated " + strconv.Itoa(i) + "/" + strconv.Itoa(len(users)) + " nicknames.")
+		}
+	}
+
+	log.Debugln("All nicknames updated.")
 }
 
 func (bot *AwakenBot) refreshUser(discordID string, guild *discordgo.Guild, s *discordgo.Session) {
