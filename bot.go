@@ -631,6 +631,18 @@ func (bot *AwakenBot) refreshUserChannel(discordID string, channel *discordgo.Ch
 		}
 	}
 
+	userID, err := bot.getUserID("discord:"+discordID, s, guild)
+	if err != nil {
+		_, err := s.ChannelMessageSend(privateChannel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+		if err != nil && channel != nil {
+			_, err = s.ChannelMessageSend(channel.ID, "You did not link your discord on the homepage yet.\nHead to https://heroesawaken.com/profile/link/discord to link your Account! :)")
+			if err != nil {
+				log.Errorln(err)
+			}
+		}
+		return
+	}
+
 	rows, err := bot.GetUserRolesByDiscordID.Query(discordID)
 	defer rows.Close()
 	if err != nil {
@@ -641,6 +653,7 @@ func (bot *AwakenBot) refreshUserChannel(discordID string, channel *discordgo.Ch
 				log.Errorln(err)
 			}
 		}
+		return
 	}
 
 	count := 0
@@ -662,6 +675,18 @@ func (bot *AwakenBot) refreshUserChannel(discordID string, channel *discordgo.Ch
 		}
 
 		count++
+	}
+
+	var id, username, email, birthday, ipAddress, discordName, discordEmail, discordDiscriminator, sqlDiscordID sql.NullString
+	err = bot.GetUserWithDiscord.QueryRow(userID).Scan(&id, &username, &email, &birthday, &ipAddress, &discordName, &discordEmail, &discordDiscriminator, &sqlDiscordID)
+	if err != nil {
+		log.Errorln("Error getting user info for " + userID)
+		return
+	}
+
+	err = s.GuildMemberNickname(guild.ID, discordID, username.String)
+	if err != nil {
+		log.Errorln("Unable to set member nickname to "+username.String, err.Error())
 	}
 
 	if count == 0 {
@@ -825,7 +850,7 @@ func (bot *AwakenBot) metricGuild(s *discordgo.Session, g *discordgo.Guild) {
 		}
 	}
 
-	for game := range online["game"] {
+	/*for game := range online["game"] {
 		tags := map[string]string{"metric": "game_members", "server": g.Name, "game": game}
 		fields := map[string]interface{}{
 			"onlineMembers": online["game"][game],
@@ -835,7 +860,7 @@ func (bot *AwakenBot) metricGuild(s *discordgo.Session, g *discordgo.Guild) {
 		if err != nil {
 			log.Errorln("Error adding Metric:", err)
 		}
-	}
+	}*/
 }
 
 func (bot *AwakenBot) getAllMembers(s *discordgo.Session, g *discordgo.Guild) {
